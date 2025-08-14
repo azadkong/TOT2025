@@ -30,6 +30,8 @@
 #include <QDebug>
 #include <QPushButton>
 #include <QAbstractItemView>
+#include <QSyntaxHighlighter>
+#include <QTimer> 
 
 #include "gfcparser.h"
 
@@ -62,8 +64,82 @@ MainWindow::MainWindow(QWidget* parent)
         lblSize_->setText(QStringLiteral("大小: %1 KB").arg(QString::number(bytes / 1024.0, 'f', 2)));
         });
 
+    editRefreshTimer_ = new QTimer(this);
+    editRefreshTimer_->setSingleShot(true);
+    editRefreshTimer_->setInterval(300); // 防抖毫秒，可按需调整
+
+    connect(editor_, &QPlainTextEdit::textChanged,
+        this, &MainWindow::onEditorTextChanged);
+    connect(editRefreshTimer_, &QTimer::timeout,
+        this, &MainWindow::reparseFromEditor);
+
     updateWindowTitle();
 }
+
+void MainWindow::onEditorTextChanged()
+{
+    if (suppressReparse_) return;        // 打开文件时 setPlainText 不触发重算
+    if (schema_.classes().isEmpty()) return;  // 未加载 .exp 时可直接返回（或也允许重算为全0）
+    editRefreshTimer_->start();          // 重启防抖计时
+}
+
+void MainWindow::reparseFromEditor()
+{
+    const QString text = editor_->toPlainText();
+    RecomputeStats st = recomputeFromText(text);
+    rebuildClassTree();                  // 你的 rebuild 已含 (0/0) 裁剪的话会生效
+
+#ifdef QT_DEBUG
+    qDebug() << "[reparseFromEditor] instances=" << st.instances
+        << "unknown=" << st.unknown
+        << "mappedCls=" << st.mappedCls;
+#endif
+    statusBar()->showMessage(
+        QStringLiteral("已根据文本刷新：实例 %1，映射到 %2 个类，忽略未知类 %3。")
+        .arg(st.instances).arg(st.mappedCls).arg(st.unknown),
+        2000);
+}
+
+MainWindow::RecomputeStats MainWindow::recomputeFromText(const QString& text)
+{
+    RecomputeStats stats;
+
+    // 1) 扫描 .gfc 实例（只提取 #idx / CLASS(大写) / pos）
+    QVector<GfcInstanceRef> refs;
+    GfcParser::countClasses(text, &refs);
+    stats.instances = refs.size();
+
+    // 2) 以 CamelCase 为唯一键；展示仍用驼峰
+    directCountCamel_.clear();
+    inclusiveCountCamel_.clear();
+    instancesByCamel_.clear();
+
+    if (schema_.classes().isEmpty()) return stats;
+    if (lowerToCamel_.isEmpty()) prepareSchemaIndex();
+
+    // 3) 直接计数 + 实例清单
+    int unknown = 0;
+    for (const auto& r : refs) {
+        const QString camel = lowerToCamel_.value(r.cls.toLower());
+        if (camel.isEmpty()) { ++unknown; continue; }
+        directCountCamel_[camel] += 1;
+        instancesByCamel_[camel].push_back(r);
+    }
+    stats.unknown = unknown;
+    stats.mappedCls = directCountCamel_.size();
+
+    // 4) 沿父链累加得到 inclusive
+    inclusiveCountCamel_ = directCountCamel_;
+    for (auto it = directCountCamel_.cbegin(); it != directCountCamel_.cend(); ++it) {
+        QString p = schema_.classes().value(it.key()).parent; // CamelCase
+        while (!p.isEmpty()) {
+            inclusiveCountCamel_[p] += it.value();
+            p = schema_.classes().value(p).parent;
+        }
+    }
+    return stats;
+}
+
 
 // ================== UI 构建 ==================
 void MainWindow::buildMenusAndToolbar()
@@ -395,71 +471,107 @@ void MainWindow::openSchemaExp()
     statusBar()->showMessage(QStringLiteral("已加载 Schema：%1").arg(path), 3000);
 }
 
+//bool MainWindow::loadGfcFromFile(const QString& path)
+//{
+//    QFile f(path);
+//    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+//        QMessageBox::warning(this, QStringLiteral("打开失败"),
+//            QStringLiteral("无法打开文件：%1").arg(path));
+//        return false;
+//    }
+//
+//    QTextStream in(&f);
+//    setUtf8(in);
+//    const QString text = in.readAll();
+//    editor_->setPlainText(text);
+//
+//    instanceRefs_.clear();
+//    QVector<GfcInstanceRef> refs;
+//    GfcParser::countClasses(text, &refs);
+//
+//    directCountCamel_.clear();
+//    inclusiveCountCamel_.clear();
+//    instancesByCamel_.clear();
+//
+//    if (schema_.classes().isEmpty()) {
+//        statusBar()->showMessage(QStringLiteral("提示：未加载 Schema(.exp)，只能显示文本，视图区计数为0。"), 4000);
+//        rebuildClassTree();
+//        return true;
+//    }
+//    if (lowerToCamel_.isEmpty()) {
+//        prepareSchemaIndex();
+//    }
+//
+//    int unknown = 0;
+//    for (const auto& r : refs) {
+//        const QString camel = lowerToCamel_.value(r.cls.toLower());
+//        if (camel.isEmpty()) { ++unknown; continue; }
+//        directCountCamel_[camel] += 1;
+//        instancesByCamel_[camel].push_back(r);
+//    }
+//
+//    inclusiveCountCamel_ = directCountCamel_;
+//    for (auto it = directCountCamel_.cbegin(); it != directCountCamel_.cend(); ++it) {
+//        QString p = schema_.classes().value(it.key()).parent;
+//        while (!p.isEmpty()) {
+//            inclusiveCountCamel_[p] += it.value();
+//            p = schema_.classes().value(p).parent;
+//        }
+//    }
+//
+//    currentFilePath_ = path;
+//    updateWindowTitle();
+//    rebuildClassTree();
+//
+//#ifdef QT_DEBUG
+//    qDebug() << "==== loadGfcFromFile ===="
+//        << "parsed instances:" << refs.size()
+//        << "unknown classes:" << unknown;
+//#endif
+//
+//    statusBar()->showMessage(
+//        QStringLiteral("已加载 GFC：解析到 %1 个实例，映射到 %2 个类，忽略未知类 %3。")
+//        .arg(refs.size()).arg(directCountCamel_.size()).arg(unknown),
+//        4000);
+//
+//    return true;
+//}
+
+
 bool MainWindow::loadGfcFromFile(const QString& path)
 {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QMessageBox::warning(this, QStringLiteral("打开失败"),
-            QStringLiteral("无法打开文件：%1").arg(path));
+        QMessageBox::warning(this, QStringLiteral("打开失败"), QStringLiteral("无法打开文件：%1").arg(path));
         return false;
     }
-
     QTextStream in(&f);
     setUtf8(in);
     const QString text = in.readAll();
+    suppressReparse_ = true;
     editor_->setPlainText(text);
+    suppressReparse_ = false;
 
-    instanceRefs_.clear();
-    QVector<GfcInstanceRef> refs;
-    GfcParser::countClasses(text, &refs);
+    // ★ 新增：启用 .gfc 语法着色
+    enableGfcSyntaxColors();
 
-    directCountCamel_.clear();
-    inclusiveCountCamel_.clear();
-    instancesByCamel_.clear();
-
-    if (schema_.classes().isEmpty()) {
-        statusBar()->showMessage(QStringLiteral("提示：未加载 Schema(.exp)，只能显示文本，视图区计数为0。"), 4000);
-        rebuildClassTree();
-        return true;
-    }
-    if (lowerToCamel_.isEmpty()) {
-        prepareSchemaIndex();
-    }
-
-    int unknown = 0;
-    for (const auto& r : refs) {
-        const QString camel = lowerToCamel_.value(r.cls.toLower());
-        if (camel.isEmpty()) { ++unknown; continue; }
-        directCountCamel_[camel] += 1;
-        instancesByCamel_[camel].push_back(r);
-    }
-
-    inclusiveCountCamel_ = directCountCamel_;
-    for (auto it = directCountCamel_.cbegin(); it != directCountCamel_.cend(); ++it) {
-        QString p = schema_.classes().value(it.key()).parent;
-        while (!p.isEmpty()) {
-            inclusiveCountCamel_[p] += it.value();
-            p = schema_.classes().value(p).parent;
-        }
-    }
-
+    // （你原有的：统计/刷新等）
+    classCounts_ = GfcParser::countClasses(text, nullptr);
+    RecomputeStats st = recomputeFromText(text);
     currentFilePath_ = path;
     updateWindowTitle();
     rebuildClassTree();
-
 #ifdef QT_DEBUG
-    qDebug() << "==== loadGfcFromFile ===="
-        << "parsed instances:" << refs.size()
-        << "unknown classes:" << unknown;
+    qDebug() << "[loadGfcFromFile] instances=" << st.instances
+        << "unknown=" << st.unknown << "mappedCls=" << st.mappedCls;
 #endif
-
     statusBar()->showMessage(
         QStringLiteral("已加载 GFC：解析到 %1 个实例，映射到 %2 个类，忽略未知类 %3。")
-        .arg(refs.size()).arg(directCountCamel_.size()).arg(unknown),
-        4000);
-
+        .arg(st.instances).arg(st.mappedCls).arg(st.unknown),
+        3500);
     return true;
 }
+
 
 bool MainWindow::saveGfcToFile(const QString& path)
 {
@@ -662,164 +774,9 @@ void MainWindow::onClassTreeClicked(const QModelIndex& idx)
     highlightOccurrences(cls);
 }
 
-// ================== 查找/替换（保持你原有逻辑不变；仅在“查找”后填充列表） ==================
+// ================== 查找/替换/高亮辅助（保持你原有逻辑不变；仅在“查找”后填充列表） ==================
 
-//void MainWindow::doFind() {
-//    bool ok = false;
-//
-//    // 创建查找对话框（你原有逻辑）
-//    QDialog* findDialog = new QDialog(this);
-//    findDialog->setWindowTitle(QStringLiteral("查找/替换"));
-//
-//    QLineEdit* findLineEdit = new QLineEdit(findDialog);
-//    findLineEdit->setText(lastFindText_);
-//
-//    QLineEdit* replaceLineEdit = new QLineEdit(findDialog);
-//    replaceLineEdit->setText(lastReplaceText_);
-//
-//    QCheckBox* caseCheckBox = new QCheckBox(QStringLiteral("区分大小写"), findDialog);
-//    caseCheckBox->setChecked(true);
-//
-//    QCheckBox* wordCheckBox = new QCheckBox(QStringLiteral("全字匹配"), findDialog);
-//    wordCheckBox->setChecked(false);
-//
-//    QPushButton* findButton = new QPushButton(QStringLiteral("查找"), findDialog);
-//    QPushButton* findNextButton = new QPushButton(QStringLiteral("查找下一个"), findDialog);
-//    QPushButton* replaceButton = new QPushButton(QStringLiteral("替换"), findDialog);
-//    QPushButton* replaceAllButton = new QPushButton(QStringLiteral("替换所有"), findDialog);
-//
-//    QVBoxLayout* layout = new QVBoxLayout(findDialog);
-//    layout->addWidget(new QLabel(QStringLiteral("查找文本:")));
-//    layout->addWidget(findLineEdit);
-//    layout->addWidget(new QLabel(QStringLiteral("替换为:")));
-//    layout->addWidget(replaceLineEdit);
-//    layout->addWidget(caseCheckBox);
-//    layout->addWidget(wordCheckBox);
-//    layout->addWidget(findButton);
-//    layout->addWidget(findNextButton);
-//    layout->addWidget(replaceButton);
-//    layout->addWidget(replaceAllButton);
-//
-//    // —— 查找：定位 + （新增）填充结果列表
-//    connect(findButton, &QPushButton::clicked, this,
-//        [this, findLineEdit, caseCheckBox, wordCheckBox] {
-//            const QString searchText = findLineEdit->text();
-//            if (searchText.isEmpty()) return;
-//
-//            lastFindText_ = searchText;
-//
-//            QTextDocument::FindFlags flags;
-//            if (caseCheckBox->isChecked()) flags |= QTextDocument::FindCaseSensitively;
-//            if (wordCheckBox->isChecked()) flags |= QTextDocument::FindWholeWords;
-//
-//            QTextCursor cursor = editor_->textCursor();
-//            cursor = editor_->document()->find(searchText, cursor, flags);
-//            if (cursor.isNull()) {
-//                QTextCursor startCursor(editor_->document());
-//                cursor = editor_->document()->find(searchText, startCursor, flags);
-//            }
-//
-//            if (!cursor.isNull()) {
-//                editor_->setTextCursor(cursor);
-//                editor_->ensureCursorVisible();
-//            }
-//            else {
-//                QMessageBox::information(this, QStringLiteral("查找"), QStringLiteral("找不到：%1").arg(searchText));
-//            }
-//
-//            // （新增）填充结果列表——不影响原有查找行为
-//            runFindAll(searchText, flags);
-//        });
-//
-//    // —— 查找下一个：保持原逻辑
-//    connect(findNextButton, &QPushButton::clicked, this,
-//        [this, findLineEdit, caseCheckBox, wordCheckBox] {
-//            const QString searchText = findLineEdit->text();
-//            if (searchText.isEmpty()) return;
-//            lastFindText_ = searchText;
-//
-//            QTextDocument::FindFlags flags;
-//            if (caseCheckBox->isChecked()) flags |= QTextDocument::FindCaseSensitively;
-//            if (wordCheckBox->isChecked()) flags |= QTextDocument::FindWholeWords;
-//
-//            QTextCursor cursor = editor_->textCursor();
-//            cursor = editor_->document()->find(searchText, cursor, flags);
-//            if (!cursor.isNull()) {
-//                editor_->setTextCursor(cursor);
-//                editor_->ensureCursorVisible();
-//            }
-//            else {
-//                QMessageBox::information(this, QStringLiteral("查找"), QStringLiteral("已到文末。"));
-//            }
-//        });
-//
-//    // —— 替换：保持原逻辑（未改动）
-//    connect(replaceButton, &QPushButton::clicked, this,
-//        [this, findLineEdit, replaceLineEdit, caseCheckBox, wordCheckBox] {
-//            QString searchText = findLineEdit->text();
-//            QString replaceText = replaceLineEdit->text();
-//            bool caseSensitive = caseCheckBox->isChecked();
-//            bool wholeWord = wordCheckBox->isChecked();
-//
-//            if (!searchText.isEmpty() && !replaceText.isEmpty()) {
-//                lastFindText_ = searchText;
-//                lastReplaceText_ = replaceText;
-//
-//                QTextDocument::FindFlags flags;
-//                if (caseSensitive) flags |= QTextDocument::FindCaseSensitively;
-//                if (wholeWord)     flags |= QTextDocument::FindWholeWords;
-//
-//                QTextCursor cursor = editor_->textCursor();
-//                if (cursor.selectedText() == searchText.toUpper()) {
-//                    cursor.insertText(replaceText);
-//                    editor_->setTextCursor(cursor);
-//                    editor_->ensureCursorVisible();
-//                }
-//                else {
-//                    cursor = editor_->document()->find(searchText, cursor, flags);
-//                    if (!cursor.isNull()) {
-//                        cursor.insertText(replaceText);
-//                        editor_->setTextCursor(cursor);
-//                        editor_->ensureCursorVisible();
-//                    }
-//                }
-//                cursor = editor_->document()->find(searchText, cursor, flags);
-//                if (!cursor.isNull()) {
-//                    editor_->setTextCursor(cursor);
-//                    editor_->ensureCursorVisible();
-//                }
-//            }
-//        });
-//
-//    // —— 替换所有：保持原逻辑（未改动）
-//    connect(replaceAllButton, &QPushButton::clicked, this,
-//        [this, findLineEdit, replaceLineEdit, caseCheckBox, wordCheckBox] {
-//            QString searchText = findLineEdit->text();
-//            QString replaceText = replaceLineEdit->text();
-//            bool caseSensitive = caseCheckBox->isChecked();
-//            bool wholeWord = wordCheckBox->isChecked();
-//
-//            if (!searchText.isEmpty() && !replaceText.isEmpty()) {
-//                lastFindText_ = searchText;
-//                lastReplaceText_ = replaceText;
-//
-//                QTextDocument::FindFlags flags;
-//                if (caseSensitive) flags |= QTextDocument::FindCaseSensitively;
-//                if (wholeWord)     flags |= QTextDocument::FindWholeWords;
-//
-//                QTextCursor cursor = editor_->textCursor();
-//                cursor = editor_->document()->find(searchText, cursor, flags);
-//                while (!cursor.isNull()) {
-//                    cursor.insertText(replaceText);
-//                    editor_->setTextCursor(cursor);
-//                    editor_->ensureCursorVisible();
-//                    cursor = editor_->document()->find(searchText, cursor, flags);
-//                }
-//            }
-//        });
-//
-//    findDialog->exec();
-//}
+
 void MainWindow::doFind() {
     // （下面这段是你原有的对话框与控件，保持不变）
     QDialog* findDialog = new QDialog(this);
@@ -1060,6 +1017,110 @@ void MainWindow::doReplace()
         }
     }
 }
+
+// 为 .gfc 文档安装语法着色（只安装一次）
+void MainWindow::enableGfcSyntaxColors()
+{
+    if (!editor_ || !editor_->document()) return;
+    if (editor_->document()->property("gfcSyntaxOn").toBool()) return;
+
+    // 局部定义一个简易高亮器，父对象设为 document，随文档一起析构
+    class GfcHighlighter final : public QSyntaxHighlighter {
+    public:
+        using QSyntaxHighlighter::QSyntaxHighlighter;
+
+        void highlightBlock(const QString& text) override {
+            // --- 颜色风格 ---
+            static const QTextCharFormat fmtStr = [] { QTextCharFormat f; f.setForeground(QColor(0, 128, 0)); return f; }();        // 字符串
+            static const QTextCharFormat fmtNum = [] { QTextCharFormat f; f.setForeground(QColor(136, 0, 136)); return f; }();      // 数字
+            static const QTextCharFormat fmtId = [] { QTextCharFormat f; f.setForeground(QColor(200, 120, 0)); return f; }();      // #123=
+            static const QTextCharFormat fmtClass = [] { QTextCharFormat f; f.setForeground(QColor(25, 118, 210)); f.setFontWeight(QFont::Bold); return f; }(); // 类名
+            static const QTextCharFormat fmtCmt = [] { QTextCharFormat f; f.setForeground(QColor(120, 120, 120)); return f; }();    // 注释
+
+            // --- 正则（按 token 类型） ---
+            // 字符串（支持转义字符），不跨行
+            static const QRegularExpression reDQ(R"("([^"\\]|\\.)*")");
+            static const QRegularExpression reSQ(R"('([^'\\]|\\.)*')");
+            // 数字：整数/小数/科学计数
+            static const QRegularExpression reNum(R"(\b[+-]?(?:\d+\.\d*|\d*\.\d+|\d+)(?:[eE][+-]?\d+)?\b)");
+            // #ID= 里的 #和数字（只匹配到 '=' 之前）
+            static const QRegularExpression reId(R"(#\s*\d+(?=\s*=))");
+            // 类名： =ClassName(   ——着色捕获组1
+            static const QRegularExpression reClass(R"(=\s*([A-Za-z_][A-Za-z0-9_]*)\s*\()");
+            // 行注释
+            static const QRegularExpression reLineCmt(R"(//.*$)", QRegularExpression::MultilineOption);
+
+            // 先清除 block 状态（用于多行注释）
+            setCurrentBlockState(0);
+
+            // 1) 字符串
+            auto it = reDQ.globalMatch(text);
+            while (it.hasNext()) { const auto m = it.next(); setFormat(m.capturedStart(), m.capturedLength(), fmtStr); }
+            it = reSQ.globalMatch(text);
+            while (it.hasNext()) { const auto m = it.next(); setFormat(m.capturedStart(), m.capturedLength(), fmtStr); }
+
+            // 2) 数字
+            it = reNum.globalMatch(text);
+            while (it.hasNext()) { const auto m = it.next(); setFormat(m.capturedStart(), m.capturedLength(), fmtNum); }
+
+            // 3) #ID=
+            it = reId.globalMatch(text);
+            while (it.hasNext()) { const auto m = it.next(); setFormat(m.capturedStart(), m.capturedLength(), fmtId); }
+
+            // 4) 类名（只给 group(1) 上色）
+            it = reClass.globalMatch(text);
+            while (it.hasNext()) {
+                const auto m = it.next();
+                const int s1 = m.capturedStart(1);
+                const int l1 = m.capturedLength(1);
+                if (s1 >= 0 && l1 > 0) setFormat(s1, l1, fmtClass);
+            }
+
+            // 5) 行注释
+            it = reLineCmt.globalMatch(text);
+            while (it.hasNext()) { const auto m = it.next(); setFormat(m.capturedStart(), m.capturedLength(), fmtCmt); }
+
+            // 6) 多行注释 /* ... */
+            //   简易实现：支持跨行，优先结束当前块残留
+            const QString startTok = "/*";
+            const QString endTok = "*/";
+            int start = 0;
+
+            if (previousBlockState() == 1) {
+                // 上一行在注释中，先找结束
+                int end = text.indexOf(endTok, 0);
+                if (end == -1) {
+                    setFormat(0, text.length(), fmtCmt);
+                    setCurrentBlockState(1);
+                    return;
+                }
+                else {
+                    setFormat(0, end + 2, fmtCmt);
+                    start = end + 2;
+                }
+            }
+
+            while (true) {
+                int s = text.indexOf(startTok, start);
+                if (s == -1) break;
+                int e = text.indexOf(endTok, s + 2);
+                if (e == -1) {
+                    setFormat(s, text.length() - s, fmtCmt);
+                    setCurrentBlockState(1);
+                    break;
+                }
+                else {
+                    setFormat(s, (e + 2) - s, fmtCmt);
+                    start = e + 2;
+                }
+            }
+        }
+    };
+
+    new GfcHighlighter(editor_->document());
+    editor_->document()->setProperty("gfcSyntaxOn", true);
+}
+
 
 // ================== 视图可见性 ==================
 void MainWindow::toggleClassDock(bool checked)

@@ -6,6 +6,7 @@
 #include <QAction>
 #include <QVector>
 #include<QTextDocument>
+#include <QTimer>   
 
 class QPlainTextEdit;
 class QTreeView;
@@ -53,6 +54,9 @@ private slots:
 
     // （新增）查找结果：双击定位
     void onFindResultActivated(int row, int col);
+
+    void onEditorTextChanged();  // ★ 新增：文本改变 -> 启动防抖
+    void reparseFromEditor();    // ★ 新增：到点重算并刷新
 
 private:
     // UI
@@ -102,6 +106,7 @@ private:
     // 高亮辅助
     void highlightOccurrences(const QString& token); // 高亮 "CLASS(" 或其它 token
     void clearHighlights();
+    void enableGfcSyntaxColors();
 
     // 属性区
     void showClassProperties(const QString& cls);
@@ -136,4 +141,15 @@ private:
 
     // （新增）把全文匹配结果填充到结果表（不改变原有查找/替换逻辑）
     void runFindAll(const QString& pattern, QTextDocument::FindFlags flags);
+
+    QTimer* editRefreshTimer_ = nullptr;  // ★ 新增：文本编辑防抖
+    bool suppressReparse_ = false;        // ★ 新增：程序性改文本时抑制重算
+
+    // ★ 新增：把“从文本重算计数/实例”的逻辑抽出来，供打开文件 & 编辑时复用
+    struct RecomputeStats {
+        int instances = 0;
+        int unknown = 0;
+        int mappedCls = 0;
+    };
+    RecomputeStats recomputeFromText(const QString& text);
 };
