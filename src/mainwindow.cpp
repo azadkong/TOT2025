@@ -150,6 +150,14 @@ void MainWindow::buildMenusAndToolbar()
     actNew->setShortcut(QKeySequence::New);
     connect(actNew, &QAction::triggered, this, &MainWindow::newFile);
 
+    // 创建并设置“最近打开的文件”菜单，并设置objectName
+    mRecentFilesMenu_ = new QMenu(QStringLiteral("最近打开的文件"), this);
+    mRecentFilesMenu_->setObjectName(QStringLiteral("recentFilesMenu"));  // 设置 objectName
+    mFile->addMenu(mRecentFilesMenu_);
+    mRecentFilesMenu_->setEnabled(false);  // 初始化时禁用菜单
+    // 更新最近文件菜单
+    updateRecentFilesMenu();
+
     auto actOpen = mFile->addAction(QStringLiteral("打开GFC (&O) ..."));
     actOpen->setShortcut(QKeySequence::Open);
     connect(actOpen, &QAction::triggered, this, &MainWindow::openGfc);
@@ -419,16 +427,23 @@ void MainWindow::newFile()
     if (findResults_) findResults_->setRowCount(0); // 清空查找结果
 }
 
-void MainWindow::openGfc()
-{
+void MainWindow::openGfc() {
     QString path = QFileDialog::getOpenFileName(this, QStringLiteral("打开 GFC 文件"), QString(), "GFC (*.gfc)");
     if (path.isEmpty()) return;
-    if (loadGfcFromFile(path)) {
-        currentFilePath_ = path;
-        updateWindowTitle();
-        if (findResults_) findResults_->setRowCount(0); // 清空查找结果
+
+    if (loadGfcFromFile(path)) {  // 假设loadGfcFromFile函数已正确实现
+        // 将文件添加到最近文件列表
+        recentFiles_.removeAll(path);  // 移除已存在的文件路径
+        recentFiles_.prepend(path);  // 将当前文件添加到列表最前面
+        if (recentFiles_.size() > 5) {
+            recentFiles_.removeLast();  // 保持列表大小为 5
+        }
+
+        // 更新菜单
+        updateRecentFilesMenu();  // 刷新最近文件菜单
     }
 }
+
 
 void MainWindow::saveGfc()
 {
@@ -1316,4 +1331,48 @@ void MainWindow::onFindResultActivated(int row, int col)
     }
     editor_->setTextCursor(c);
     editor_->ensureCursorVisible();
+}
+
+void MainWindow::updateRecentFilesMenu() {
+    // 确保直接使用 mRecentFilesMenu_ 操作菜单
+    if (!mRecentFilesMenu_) {
+        qWarning() << "最近文件菜单未正确初始化";
+        return;
+    }
+
+    // 清空菜单项
+    mRecentFilesMenu_->clear();
+
+    // 输出最近打开文件的数量
+    //qDebug() << "最近打开的文件数量:" << recentFiles_.size();
+
+    // 若没有文件，则禁用菜单
+    if (recentFiles_.isEmpty()) {
+        mRecentFilesMenu_->setEnabled(false);  // 没有最近文件时禁用菜单
+        return;  // 如果没有文件，直接退出
+    }
+
+    // 启用菜单
+    mRecentFilesMenu_->setEnabled(true);
+
+    // 为每个最近打开的文件添加菜单项
+    for (int i = 0; i < recentFiles_.size(); ++i) {
+        const QString& filePath = recentFiles_[i];
+        QAction* act = mRecentFilesMenu_->addAction(filePath);  // 添加菜单项
+        connect(act, &QAction::triggered, this, [this, filePath] { openRecentFile(filePath); });  // 连接点击信号
+    }
+}
+
+
+
+void MainWindow::openRecentFile(const QString& filePath) {
+    if (loadGfcFromFile(filePath)) {  // 假设loadGfcFromFile函数已正确实现
+        // 加载成功后，更新菜单（避免重复添加）
+        recentFiles_.removeAll(filePath);
+        recentFiles_.prepend(filePath);
+        if (recentFiles_.size() > 5) {
+            recentFiles_.removeLast();
+        }
+        updateRecentFilesMenu();  // 刷新最近文件菜单
+    }
 }

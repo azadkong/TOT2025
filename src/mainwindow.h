@@ -59,6 +59,10 @@ private slots:
     void reparseFromEditor();    // ★ 新增：到点重算并刷新
 
 private:
+    QList<QString> recentFiles_;  // 用于存储最近打开的文件路径
+    void updateRecentFilesMenu();  // 更新最近打开文件的菜单
+    void openRecentFile(const QString& filePath);  // 打开最近的文件
+    QMenu* mRecentFilesMenu_;     // 最近文件菜单
     // UI
     QPlainTextEdit* editor_;
     QPointer<QTreeView> classTree_;
