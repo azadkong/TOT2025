@@ -5,6 +5,7 @@
 #include <QSet>
 #include <QAction>
 #include <QVector>
+#include<QTextDocument>
 
 class QPlainTextEdit;
 class QTreeView;
@@ -19,7 +20,7 @@ class MainWindow : public QMainWindow
 {
     Q_OBJECT
 public:
-    explicit MainWindow(QWidget* parent=nullptr);
+    explicit MainWindow(QWidget* parent = nullptr);
 
 private slots:
 
@@ -50,6 +51,9 @@ private slots:
     void goForward();
     void locateAtCursor();
 
+    // （新增）查找结果：双击定位
+    void onFindResultActivated(int row, int col);
+
 private:
     // UI
     QPlainTextEdit* editor_;
@@ -60,6 +64,9 @@ private:
     QLabel* lblSize_;
     QString lastReplaceText_;
 
+    // （新增）查找结果列表
+    QPointer<QTableWidget> findResults_;
+
     // 状态
     QString currentFilePath_;
     QString currentSchemaPath_;
@@ -68,7 +75,7 @@ private:
     QHash<QString, int> classCounts_;        // 该GFC中每类的直接实例数（不含子类）
     QString lastFindText_;
 
-        // 导航状态
+    // 导航状态
     QAction* actBack_{};
     QAction* actForward_{};
     QAction* actLocate_{};
@@ -78,9 +85,9 @@ private:
     int findInstancePosition(int id) const;
     void navigateTo(int pos, bool fromBackOrForward);
 
-// 构建UI
+    // 构建UI
     void buildMenusAndToolbar();
-    void showHelpDocument(); 
+    void showHelpDocument();
     void showAboutDialog();
     void buildDocks();
     void buildStatusBar();
@@ -114,12 +121,12 @@ private:
     void updateParentInstances(const QString& cls);
 
     // ==== 新增：用于大小写无关匹配（不改变展示用的驼峰原名） ====
-// lower -> CamelCase(展示名)
+    // lower -> CamelCase(展示名)
     QHash<QString, QString> lowerToCamel_;
 
     // 计数（key 一律用 CamelCase，与 schema_.classes() 的 key 一致）
     QHash<QString, int> directCountCamel_;      // 本类直接实例数
-    QHash<QString, int> inclusiveCountCamel_;   // 包含子类的实例总数（由下往上累加）
+    QHash<QString, int> inclusiveCountCamel_;   // 包含子类总数
 
     // 实例列表（key 用 CamelCase）
     QHash<QString, QVector<GfcInstanceRef>> instancesByCamel_;
@@ -127,4 +134,6 @@ private:
     // ==== 辅助 ====
     void prepareSchemaIndex();  // 从 schema_ 构建 lowerToCamel_
 
+    // （新增）把全文匹配结果填充到结果表（不改变原有查找/替换逻辑）
+    void runFindAll(const QString& pattern, QTextDocument::FindFlags flags);
 };
