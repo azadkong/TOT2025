@@ -11,6 +11,14 @@
  * - 记录每个实例编号在文本中的位置（预留给后续“定位/跳转/属性区联动”）
  */
 
+struct ParsedInstance {
+    int index = -1;          // #123 -> 123
+    QString classUpper;      // 文本中的大写类名，如 GFCVECTOR3D
+    QStringList params;      // 顶层逗号分隔的参数（已按括号栈切分）
+    int start = -1;          // 实例起始字符位置（#开始处）
+    int end = -1;            // 实例结束字符位置（含右括号与可选分号）
+};
+
 struct GfcInstanceRef {
     int index = -1;    // 实例号，如 #12 -> 12
     QString cls;       // 类名，如 GFCWALL
@@ -25,4 +33,10 @@ public:
 
     // 将 #123 这样的实例引用提取为数值 123，失败返回 -1
     static int parseInstanceIndex(const QString& token);
+
+    static bool parseInstanceAt(const QString& text, int startPos, ParsedInstance* out);
+
+private:
+    // ★ 新增：切分顶层参数（忽略嵌套括号/字符串内部逗号）
+    static QStringList splitTopLevelCsv(const QString& s);
 };

@@ -1,6 +1,96 @@
 #include "gfcparser.h"
 #include <QRegularExpression>
 
+// === 放在 gfcparser.cpp 末尾（或合适位置） ===
+#include <QRegularExpression>
+
+static inline bool isQuoteEscape(const QString& t, int i) {
+    // STEP风格字符串用两个连续单引号表示转义，如 'it''s ok'
+    return (i + 1 < t.size() && t[i] == '\'' && t[i + 1] == '\'');
+}
+
+QStringList GfcParser::splitTopLevelCsv(const QString& s)
+{
+    QStringList out;
+    QString cur; cur.reserve(s.size());
+    int depth = 0;
+    bool inStr = false;
+    for (int i = 0; i < s.size(); ++i) {
+        const QChar ch = s[i];
+        if (inStr) {
+            cur += ch;
+            if (isQuoteEscape(s, i)) { cur += s[i + 1]; ++i; continue; }
+            if (ch == '\'') inStr = false;
+            continue;
+        }
+        if (ch == '\'') { inStr = true; cur += ch; continue; }
+        if (ch == '(') { ++depth; cur += ch; continue; }
+        if (ch == ')') { --depth; cur += ch; continue; }
+        if (ch == ',' && depth == 0) {
+            out << cur.trimmed(); cur.clear(); continue;
+        }
+        cur += ch;
+    }
+    if (!cur.trimmed().isEmpty() || (s.size() && s.back() == ',')) out << cur.trimmed();
+    return out;
+}
+
+bool GfcParser::parseInstanceAt(const QString& text, int startPos, ParsedInstance* out)
+{
+    if (!out) return false;
+    *out = ParsedInstance{};
+
+    // 从当前行开始匹配：#n=CLASS(
+    int lineStart = text.lastIndexOf('\n', qMax(0, startPos));
+    if (lineStart < 0) lineStart = 0; else ++lineStart;
+
+    QRegularExpression re(R"(#\s*([0-9]+)\s*=\s*([A-Za-z0-9_]+)\s*\()", QRegularExpression::CaseInsensitiveOption);
+    auto m = re.match(text, lineStart);
+    if (!m.hasMatch()) {
+        // 再从给定位置尝试一次（若传入的是 # 位置）
+        m = re.match(text, startPos);
+        if (!m.hasMatch()) return false;
+    }
+
+    const int hashStart = m.capturedStart(0);
+    const int idx = m.captured(1).toInt();
+    const QString clsUpper = m.captured(2).toUpper();
+
+    // 找到第一个 '('，向后扫描到与之匹配的 ')'
+    int parenOpen = text.indexOf('(', m.capturedEnd(0) - 1);
+    if (parenOpen < 0) return false;
+
+    int i = parenOpen, depth = 0; bool inStr = false;
+    for (; i < text.size(); ++i) {
+        const QChar ch = text[i];
+        if (inStr) {
+            if (isQuoteEscape(text, i)) { ++i; continue; }
+            if (ch == '\'') inStr = false;
+            continue;
+        }
+        if (ch == '\'') { inStr = true; continue; }
+        if (ch == '(') { ++depth; continue; }
+        if (ch == ')') { --depth; if (depth == 0) { ++i; break; } continue; }
+    }
+    if (i >= text.size()) return false;
+
+    // 可选分号
+    int endPos = i;
+    if (endPos < text.size() && text[endPos] == ';') ++endPos;
+
+    // 顶层参数切分
+    const QString paramZone = text.mid(parenOpen + 1, i - (parenOpen + 1));
+    const QStringList params = splitTopLevelCsv(paramZone);
+
+    out->index = idx;
+    out->classUpper = clsUpper;
+    out->params = params;
+    out->start = hashStart;
+    out->end = endPos;
+    return true;
+}
+
+
 QHash<QString, int> GfcParser::countClasses(const QString &wholeText,
                                             QVector<GfcInstanceRef>* instanceRefs)
 {
