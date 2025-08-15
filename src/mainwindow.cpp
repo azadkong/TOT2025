@@ -32,6 +32,12 @@
 #include <QAbstractItemView>
 #include <QSyntaxHighlighter>
 #include <QTimer> 
+#include <QRegularExpression>
+#include <QTextCursor>
+#include <QTextEdit>
+#include <QTableWidgetItem>
+#include <QColor>
+#include<QApplication>
 
 #include "gfcparser.h"
 
@@ -58,6 +64,9 @@ MainWindow::MainWindow(QWidget* parent)
     buildStatusBar();
 
     // 信号：更新状态栏
+    editor_->viewport()->setMouseTracking(true);         // 为了在 Ctrl+移动时改鼠标
+    editor_->viewport()->installEventFilter(this);       // 安装事件过滤器
+
     connect(editor_, &QPlainTextEdit::cursorPositionChanged, this, &MainWindow::onCursorPosChanged);
     connect(editor_, &QPlainTextEdit::textChanged, this, [this] {
         const int bytes = editor_->toPlainText().toUtf8().size();
@@ -777,17 +786,130 @@ void MainWindow::onCursorPosChanged()
     int line = c.blockNumber() + 1;
     int col = c.positionInBlock() + 1;
     lblPos_->setText(QStringLiteral("行: %1  列: %2").arg(line).arg(col));
+
+    // 当前行是否是实例创建开头？如果是，仅展示属性与高亮，但不移动光标
+    const QString blockText = c.block().text();
+    QRegularExpression re(R"(^\s*#\s*([0-9]+)\s*=\s*([A-Za-z0-9_]+)\s*\()");
+    auto m = re.match(blockText);
+    if (m.hasMatch()) {
+        const int startInBlock = m.capturedStart(0);
+        const int absStart = c.block().position() + startInBlock;
+        showInstanceByPos(absStart, /*moveCaret=*/false);  // ✅ 文本点击：不跳光标，便于编辑
+    }
 }
+
+
+void MainWindow::highlightRange(int start, int end)
+{
+    QList<QTextEdit::ExtraSelection> sels;
+    QTextCursor cur(editor_->document());
+    cur.setPosition(start);
+    cur.setPosition(end, QTextCursor::KeepAnchor);
+
+    QTextEdit::ExtraSelection sel;
+    sel.cursor = cur;
+    QTextCharFormat fmt;
+    fmt.setBackground(QColor(255, 255, 0, 120)); // 半透明黄
+    sel.format = fmt;
+    sels << sel;
+
+    currentSelections_ = sels;
+    editor_->setExtraSelections(currentSelections_);
+}
+
+QString MainWindow::camelFromUpper(const QString& upper) const
+{
+    // 使用 lowerToCamel_ 建立的大小写无关映射（.exp 加载后 prepareSchemaIndex() 填充）
+    return lowerToCamel_.value(upper.toLower());
+}
+
+QStringList MainWindow::schemaAttrNames(const QString& camel) const
+{
+    QStringList names;
+    if (!schema_.classes().contains(camel)) return names;
+    const auto& attrs = schema_.classes()[camel].attributes; // "name : TYPE"
+    QRegularExpression nameRe(R"(^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:)");
+    for (const QString& line : attrs) {
+        auto m = nameRe.match(line);
+        names << (m.hasMatch() ? m.captured(1) : line.trimmed());
+    }
+    return names;
+}
+
+void MainWindow::showParsedInstanceProperties(const ParsedInstance& pi, const QString& camel)
+{
+    propTable_->clearContents();
+    propTable_->setRowCount(0);
+    propTable_->setHorizontalHeaderLabels({ QStringLiteral("属性名"), QStringLiteral("值") });
+
+    const QStringList names = schemaAttrNames(camel);     // 按 .exp 顺序
+    const int rows = qMax(names.size(), pi.params.size());
+    propTable_->setRowCount(rows);
+
+    for (int i = 0; i < rows; ++i) {
+        const QString n = (i < names.size()) ? names[i] : QStringLiteral("<extra #%1>").arg(i + 1);
+        const QString v = (i < pi.params.size()) ? pi.params[i] : QStringLiteral("<missing>");
+
+        auto* c0 = new QTableWidgetItem(n);
+        c0->setFlags(c0->flags() & ~Qt::ItemIsEditable);
+        auto* c1 = new QTableWidgetItem(v);
+        c1->setFlags(c1->flags() & ~Qt::ItemIsEditable);
+
+        propTable_->setItem(i, 0, c0);
+        propTable_->setItem(i, 1, c1);
+    }
+}
+
+void MainWindow::showInstanceByPos(int pos, bool moveCaret)
+{
+    ParsedInstance pi;
+    const QString text = editor_->toPlainText();
+    if (!GfcParser::parseInstanceAt(text, pos, &pi)) {
+        return; // 不是实例或解析失败：不动属性表/高亮
+    }
+
+    const QString camel = camelFromUpper(pi.classUpper);
+    if (!camel.isEmpty()) {
+        showParsedInstanceProperties(pi, camel);
+    }
+    else {
+        // 未映射到 schema 的类：也按顺序展示参数
+        showParsedInstanceProperties(pi, QString());
+    }
+
+    // 仅做“额外高亮”，不影响编辑光标
+    highlightRange(pi.start, pi.end);
+
+    // 只有在明确要求时才移动/居中光标（例如：从类树点击实例时）
+    if (moveCaret) {
+        QTextCursor tc(editor_->document());
+        tc.setPosition(pi.start);
+        editor_->setTextCursor(tc);
+        editor_->centerCursor();
+    }
+}
+
+
 
 void MainWindow::onClassTreeClicked(const QModelIndex& idx)
 {
     if (!idx.isValid()) return;
-    QString cls = idx.data(Qt::UserRole + 1).toString();
-    if (cls.isEmpty()) return;
+    const int nodeType = idx.data(RoleNodeType).toInt();
 
+    if (nodeType == NodeInstance) {
+        const int pos = idx.data(RoleDocPos).toInt();
+        showInstanceByPos(pos, /*moveCaret=*/true);   // ✅ 类视图点击：允许跳转
+        return;
+    }
+
+    // 类节点：显示 Schema 属性 + 高亮类名出现处
+    const QString cls = idx.data(RoleClassName).toString();
+    if (cls.isEmpty()) return;
     showClassProperties(cls);
     highlightOccurrences(cls);
 }
+
+
 
 // ================== 查找/替换/高亮辅助（保持你原有逻辑不变；仅在“查找”后填充列表） ==================
 
@@ -1046,11 +1168,13 @@ void MainWindow::enableGfcSyntaxColors()
 
         void highlightBlock(const QString& text) override {
             // --- 颜色风格 ---
-            static const QTextCharFormat fmtStr = [] { QTextCharFormat f; f.setForeground(QColor(0, 128, 0)); return f; }();        // 字符串
-            static const QTextCharFormat fmtNum = [] { QTextCharFormat f; f.setForeground(QColor(136, 0, 136)); return f; }();      // 数字
-            static const QTextCharFormat fmtId = [] { QTextCharFormat f; f.setForeground(QColor(200, 120, 0)); return f; }();      // #123=
+            static const QTextCharFormat fmtStr = [] { QTextCharFormat f; f.setForeground(QColor(0, 128, 0));    return f; }(); // 字符串
+            static const QTextCharFormat fmtNum = [] { QTextCharFormat f; f.setForeground(QColor(136, 0, 136));  return f; }(); // 数字
+            static const QTextCharFormat fmtId = [] { QTextCharFormat f; f.setForeground(QColor(200, 120, 0));  return f; }(); // #123=
             static const QTextCharFormat fmtClass = [] { QTextCharFormat f; f.setForeground(QColor(25, 118, 210)); f.setFontWeight(QFont::Bold); return f; }(); // 类名
-            static const QTextCharFormat fmtCmt = [] { QTextCharFormat f; f.setForeground(QColor(120, 120, 120)); return f; }();    // 注释
+            static const QTextCharFormat fmtCmt = [] { QTextCharFormat f; f.setForeground(QColor(120, 120, 120));  return f; }(); // 注释
+            // ★ 新增：关键字 HEADER / DATA（红色加粗）
+            static const QTextCharFormat fmtKw = [] { QTextCharFormat f; f.setForeground(QColor(220, 0, 0)); f.setFontWeight(QFont::Bold); return f; }();
 
             // --- 正则（按 token 类型） ---
             // 字符串（支持转义字符），不跨行
@@ -1062,6 +1186,8 @@ void MainWindow::enableGfcSyntaxColors()
             static const QRegularExpression reId(R"(#\s*\d+(?=\s*=))");
             // 类名： =ClassName(   ——着色捕获组1
             static const QRegularExpression reClass(R"(=\s*([A-Za-z_][A-Za-z0-9_]*)\s*\()");
+            // ★ 新增：关键字（仅匹配完整单词）
+            static const QRegularExpression reKw(R"(\b(?:HEADER|DATA)\b)");
             // 行注释
             static const QRegularExpression reLineCmt(R"(//.*$)", QRegularExpression::MultilineOption);
 
@@ -1091,12 +1217,15 @@ void MainWindow::enableGfcSyntaxColors()
                 if (s1 >= 0 && l1 > 0) setFormat(s1, l1, fmtClass);
             }
 
-            // 5) 行注释
+            // ★ 5) 关键字 HEADER / DATA（注意放在注释着色之前，后者会覆盖前者）
+            it = reKw.globalMatch(text);
+            while (it.hasNext()) { const auto m = it.next(); setFormat(m.capturedStart(), m.capturedLength(), fmtKw); }
+
+            // 6) 行注释
             it = reLineCmt.globalMatch(text);
             while (it.hasNext()) { const auto m = it.next(); setFormat(m.capturedStart(), m.capturedLength(), fmtCmt); }
 
-            // 6) 多行注释 /* ... */
-            //   简易实现：支持跨行，优先结束当前块残留
+            // 7) 多行注释 /* ... */
             const QString startTok = "/*";
             const QString endTok = "*/";
             int start = 0;
@@ -1375,4 +1504,144 @@ void MainWindow::openRecentFile(const QString& filePath) {
         }
         updateRecentFilesMenu();  // 刷新最近文件菜单
     }
+}
+
+
+// ================== Ctrl+点击 #id 跳转 ==================
+
+bool MainWindow::eventFilter(QObject* obj, QEvent* ev)
+{
+    if (obj == editor_->viewport()) {
+
+        // 鼠标移动：按住 Ctrl 且位于 #id 上时显示手形光标
+        if (ev->type() == QEvent::MouseMove) {
+            auto* me = static_cast<QMouseEvent*>(ev);
+            Qt::CursorShape shape = Qt::IBeamCursor;
+            if (QApplication::keyboardModifiers() & Qt::ControlModifier) {
+                // 粗判：当前位置是否落在 #数字 上
+                QTextCursor c = editor_->cursorForPosition(me->pos());
+                int dummy = -1;
+                if (extractHashIdAtCursor(c, &dummy)) {
+                    shape = Qt::PointingHandCursor;
+                }
+            }
+            editor_->viewport()->setCursor(shape);
+        }
+
+        // Ctrl + 左键：跳转
+        if (ev->type() == QEvent::MouseButtonRelease) {
+            auto* me = static_cast<QMouseEvent*>(ev);
+            if ((me->button() == Qt::LeftButton) &&
+                (QApplication::keyboardModifiers() & Qt::ControlModifier)) {
+                if (ctrlClickJumpToInstance(me->pos())) {
+                    return true; // 事件已处理
+                }
+            }
+        }
+    }
+    return QMainWindow::eventFilter(obj, ev);
+}
+
+bool MainWindow::ctrlClickJumpToInstance(const QPoint& viewPos)
+{
+    // 1) 把点击位置换算成文本光标
+    QTextCursor cur = editor_->cursorForPosition(viewPos);
+
+    // 2) 提取 #数字
+    int id = -1;
+    if (!extractHashIdAtCursor(cur, &id) || id < 0) {
+        return false;
+    }
+
+    // 3) 找到对应定义行 "#id=CLASS(...)" 的起始 offset（行首的 '#' 位置）
+    const int defPos = findInstancePosition(id);   // 你项目里已实现的方法
+    if (defPos < 0) {
+        QMessageBox::warning(this, QStringLiteral("定位失败"),
+            QStringLiteral("未找到实例 #%1").arg(id));
+        return true; // 事件已处理
+    }
+
+    // 4) 入栈（支持后退/前进）
+    QTextCursor before = editor_->textCursor();
+    navBackStack_.append(before.position());
+    navFwdStack_.clear();
+    updateNavActions();
+
+    // 5) 选中并高亮 "#id=" ，并居中显示
+    highlightIdTokenAt(defPos, id);
+    editor_->centerCursor();
+    return true;
+}
+
+bool MainWindow::extractHashIdAtCursor(const QTextCursor& cur, int* outId) const
+{
+    // 仅在当前行内做词法扩展，允许在括号中，如 (...,#5,...) 或 (#12)
+    const QTextBlock blk = cur.block();
+    const QString line = blk.text();
+    const int posInBlock = cur.position() - blk.position();
+
+    if (line.isEmpty()) return false;
+
+    // 先向左找到 '#'
+    int left = posInBlock;
+    if (left >= line.size()) left = line.size() - 1;
+
+    // 若正好点在字符右侧，优先看右侧
+    if (left + 1 < line.size() && line[left + 1] == '#') left = left + 1;
+
+    // 向左退，跳过数字，停在非数字
+    while (left >= 0 && line[left].isDigit()) --left;
+
+    if (left < 0 || line[left] != '#') {
+        // 也可能光标正好落在 '#' 上
+        if (posInBlock < line.size() && line[posInBlock] == '#') {
+            left = posInBlock;
+        }
+        else {
+            return false;
+        }
+    }
+
+    // 向右收集数字
+    int i = left + 1;
+    QString digits;
+    while (i < line.size() && line[i].isDigit()) { digits += line[i]; ++i; }
+    if (digits.isEmpty()) return false;
+
+    // （可选）判断是否“在括号内”
+    // 若严格要求括号内，可打开下列判断：
+    // int lparen = line.lastIndexOf('(', left);
+    // int rparen = line.indexOf(')', i);
+    // if (!(lparen >= 0 && rparen >= 0 && lparen < left && rparen > i)) return false;
+
+    if (outId) *outId = digits.toInt();
+    return true;
+}
+
+void MainWindow::highlightIdTokenAt(int pos, int id)
+{
+    // 选中 "#id=" 这个 token；若没有 '='，则只选到数字末尾
+    QTextCursor c(editor_->document());
+    c.setPosition(pos);
+
+    const QString sid = QString::number(id);
+    int len = 1 + sid.size(); // "#"+digits
+
+    // 如果紧跟着是 '=' 则一起选中
+    if (editor_->document()->characterAt(pos + len) == QChar('=')) {
+        ++len;
+    }
+
+    // 设置选中范围
+    c.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor, len);
+    editor_->setTextCursor(c);
+
+    // 用 ExtraSelection 给一点底色
+    QTextEdit::ExtraSelection sel;
+    sel.cursor = c;
+    QTextCharFormat fmt;
+    fmt.setBackground(QColor(255, 236, 179)); // 柔和黄
+    fmt.setFontWeight(QFont::Bold);
+    sel.format = fmt;
+    editor_->setExtraSelections({ sel });
 }

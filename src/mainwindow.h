@@ -7,6 +7,11 @@
 #include <QVector>
 #include<QTextDocument>
 #include <QTimer>   
+#include <QRegularExpression>
+#include <QTextCursor>
+#include <QTextEdit>
+#include <QTableWidgetItem>
+#include <QColor>
 
 class QPlainTextEdit;
 class QTreeView;
@@ -107,6 +112,19 @@ private:
     void rebuildClassTree();                 // 依据 schema_ + classCounts_ 构树
     int  computeInclusiveCount(const QString& cls) const; // 递归计算含子类总数
 
+    // ★ 覆写事件过滤器：处理 Ctrl+点击、Ctrl+移动改鼠标样式
+    bool eventFilter(QObject* obj, QEvent* ev) override;
+
+
+    // ★ Ctrl+点击时的跳转逻辑（viewPos 为 viewport 坐标）
+    bool ctrlClickJumpToInstance(const QPoint& viewPos);
+
+    // ★ 从“光标所在行的某位置”提取 #数字（若 outId 非空则回写）
+    bool extractHashIdAtCursor(const QTextCursor& cur, int* outId) const;
+
+    // ★ 在 pos 处“选中并高亮” #id= 这一小段
+    void highlightIdTokenAt(int pos, int id);
+
     // 高亮辅助
     void highlightOccurrences(const QString& token); // 高亮 "CLASS(" 或其它 token
     void clearHighlights();
@@ -156,4 +174,11 @@ private:
         int mappedCls = 0;
     };
     RecomputeStats recomputeFromText(const QString& text);
+
+    void showInstanceByPos(int pos, bool moveCaret = true);
+    void highlightRange(int start, int end);
+    QString camelFromUpper(const QString& upper) const;
+    QStringList schemaAttrNames(const QString& camel) const;
+    void showParsedInstanceProperties(const ParsedInstance& pi, const QString& camel);
+    QList<QTextEdit::ExtraSelection> currentSelections_;
 };
