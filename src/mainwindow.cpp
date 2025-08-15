@@ -24,7 +24,6 @@
 #include <QVector>
 #include <QHeaderView>
 #include <QTextDocument>
-#include <QInputDialog>
 #include <QCheckBox>
 #include <QVBoxLayout>
 #include <QDebug>
@@ -32,10 +31,7 @@
 #include <QAbstractItemView>
 #include <QSyntaxHighlighter>
 #include <QTimer> 
-#include <QRegularExpression>
-#include <QTextCursor>
 #include <QTextEdit>
-#include <QTableWidgetItem>
 #include <QColor>
 #include<QApplication>
 
@@ -1735,6 +1731,26 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* ev)
                 }
             }
         }
+        // 普通左键：记录“点击前”的光标位置，作为后退/前进历史
+        if (ev->type() == QEvent::MouseButtonPress || ev->type() == QEvent::MouseButtonDblClick) {
+            auto* me = static_cast<QMouseEvent*>(ev);
+
+            // 仅记录左键，且不按 Ctrl（Ctrl+左键的跳转在 ctrlClickJumpToInstance() 里已经做了入栈）
+            if (me->button() == Qt::LeftButton &&
+                !(QApplication::keyboardModifiers() & Qt::ControlModifier)) {
+
+                const int beforePos = editor_->textCursor().position();
+
+                // 去重：与后退栈顶相同则不重复压栈
+                if (navBackStack_.isEmpty() || navBackStack_.last() != beforePos) {
+                    navBackStack_.append(beforePos);
+                    navFwdStack_.clear();
+                    updateNavActions();
+                }
+                // 注意：这里不改变光标，由 Qt 自己处理鼠标点击后的移动
+            }
+        }
+
     }
     return QMainWindow::eventFilter(obj, ev);
 }
