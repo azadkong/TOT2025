@@ -1859,43 +1859,53 @@ void MainWindow::highlightIdTokenAt(int pos, int id)
     editor_->setExtraSelections({ sel });
 }
 
-// 从可执行文件目录开始向上查找，优先返回“包含 CMakeLists.txt 的目录”里的 *.exp
-// 若一路找不到 CMakeLists.txt，则返回向上遍历过程中遇到的第一份 *.exp；再不行就返回空
 QString MainWindow::findSchemaExpNearCMake()
 {
-    QDir dir(QCoreApplication::applicationDirPath());
-    QString firstFoundExp;               // 记录沿途遇到的第一份 .exp
+    // 1) 从可执行文件目录开始，向上找到含 CMakeLists.txt 的“项目根”
+    QDir start(QCoreApplication::applicationDirPath());
+    QDir dir = start;
     int guard = 0;
-
-    while (true) {
-        // 先找 .exp（优先 GFC*.exp，其次任意 *.exp）
-        QFileInfoList picks = dir.entryInfoList(QStringList() << "GFC*.exp", QDir::Files, QDir::Time);
-        if (picks.isEmpty()) {
-            picks = dir.entryInfoList(QStringList() << "*.exp", QDir::Files, QDir::Time);
-        }
-        if (!picks.isEmpty() && firstFoundExp.isEmpty()) {
-            firstFoundExp = picks.first().absoluteFilePath();
-        }
-
-        // 如果这个目录有 CMakeLists.txt：优先返回这里的 .exp（若没有就退回用 firstFoundExp）
-        if (dir.exists("CMakeLists.txt")) {
-            if (!picks.isEmpty()) return picks.first().absoluteFilePath();
-            return firstFoundExp;
-        }
-
-        // 继续向上走；最多走 12 层防止意外
-        if (!dir.cdUp() || ++guard > 12) break;
+    while (!dir.exists("CMakeLists.txt")) {
+        if (!dir.cdUp() || ++guard > 12) break; // 最多向上 12 层
     }
 
-    // 没找到 CMakeLists.txt，就用沿途遇到的第一份 .exp；再没有就看看 exe 目录
-    if (!firstFoundExp.isEmpty()) return firstFoundExp;
+    // 2) 如果找到了项目根，在 <项目根>/resource/ 里找 .exp
+    if (dir.exists("CMakeLists.txt")) {
+        QDir res(dir.filePath("resource"));
+        if (res.exists()) {
+            // 优先 GFC*.exp，其次 *.exp；按时间排序（最新优先）
+            QFileInfoList picks = res.entryInfoList(QStringList() << "GFC*.exp",
+                QDir::Files, QDir::Time);
+            if (picks.isEmpty()) {
+                picks = res.entryInfoList(QStringList() << "*.exp",
+                    QDir::Files, QDir::Time);
+            }
+            if (!picks.isEmpty())
+                return picks.first().absoluteFilePath();
+        }
+        // 项目根存在但 resource/ 里没有 .exp
+        return QString();
+    }
 
-    dir.setPath(QCoreApplication::applicationDirPath());
-    QFileInfoList fallback = dir.entryInfoList(QStringList() << "*.exp", QDir::Files, QDir::Time);
-    if (!fallback.isEmpty()) return fallback.first().absoluteFilePath();
+    // 3) 没找到项目根（例如从奇怪路径启动），退回到 exe 同级的 resource/ 里再找一次
+    {
+        QDir res(start.filePath("resource"));
+        if (res.exists()) {
+            QFileInfoList picks = res.entryInfoList(QStringList() << "GFC*.exp",
+                QDir::Files, QDir::Time);
+            if (picks.isEmpty()) {
+                picks = res.entryInfoList(QStringList() << "*.exp",
+                    QDir::Files, QDir::Time);
+            }
+            if (!picks.isEmpty())
+                return picks.first().absoluteFilePath();
+        }
+    }
 
+    // 4) 两处都没有
     return QString();
 }
+
 
 // 程序启动时自动加载 .exp
 void MainWindow::autoLoadSchemaOnStartup()
