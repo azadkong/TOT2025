@@ -62,11 +62,11 @@ private slots:
     void goForward();
     void locateAtCursor();
 
-    // （新增）查找结果：双击定位
+    // 查找结果：双击定位
     void onFindResultActivated(int row, int col);
 
-    void onEditorTextChanged();  // ★ 新增：文本改变 -> 启动防抖
-    void reparseFromEditor();    // ★ 新增：到点重算并刷新
+    void onEditorTextChanged();  // 文本改变 -> 启动防抖
+    void reparseFromEditor();    // 到点重算并刷新
 
     void highlightRangeColored(int start, int end, const QColor& bg);
     void onPropTableCellClicked(int row, int col);
@@ -119,17 +119,17 @@ private:
     void rebuildClassTree();                 // 依据 schema_ + classCounts_ 构树
     int  computeInclusiveCount(const QString& cls) const; // 递归计算含子类总数
 
-    // ★ 覆写事件过滤器：处理 Ctrl+点击、Ctrl+移动改鼠标样式
+    // 覆写事件过滤器：处理 Ctrl+点击、Ctrl+移动改鼠标样式
     bool eventFilter(QObject* obj, QEvent* ev) override;
 
 
-    // ★ Ctrl+点击时的跳转逻辑（viewPos 为 viewport 坐标）
+    //Ctrl+点击时的跳转逻辑（viewPos 为 viewport 坐标）
     bool ctrlClickJumpToInstance(const QPoint& viewPos);
 
-    // ★ 从“光标所在行的某位置”提取 #数字（若 outId 非空则回写）
+    // 从“光标所在行的某位置”提取 #数字（若 outId 非空则回写）
     bool extractHashIdAtCursor(const QTextCursor& cur, int* outId) const;
 
-    // ★ 在 pos 处“选中并高亮” #id= 这一小段
+    // 在 pos 处“选中并高亮” #id= 这一小段
     void highlightIdTokenAt(int pos, int id);
 
     // 高亮辅助
@@ -194,5 +194,6 @@ private:
 
 
     QPair<int, int> paramRangeInInstance(const ParsedInstance& pi, int paramIndex, const QString& wholeText);
+
     ParsedInstance currentInstance_;
 };

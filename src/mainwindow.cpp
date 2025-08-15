@@ -46,41 +46,6 @@ static void setUtf8(QTextStream& ts) {
 #endif
 }
 
-//MainWindow::MainWindow(QWidget* parent)
-//    : QMainWindow(parent),
-//    editor_(new QPlainTextEdit(this)),
-//    lblPos_(new QLabel(this)),
-//    lblSize_(new QLabel(this))
-//{
-//    setCentralWidget(editor_);
-//    buildMenusAndToolbar();
-//    updateNavActions();
-//
-//    buildDocks();
-//    buildStatusBar();
-//
-//    // 信号：更新状态栏
-//    editor_->viewport()->setMouseTracking(true);         // 为了在 Ctrl+移动时改鼠标
-//    editor_->viewport()->installEventFilter(this);       // 安装事件过滤器
-//
-//    connect(editor_, &QPlainTextEdit::cursorPositionChanged, this, &MainWindow::onCursorPosChanged);
-//    connect(editor_, &QPlainTextEdit::textChanged, this, [this] {
-//        const int bytes = editor_->toPlainText().toUtf8().size();
-//        lblSize_->setText(QStringLiteral("大小: %1 KB").arg(QString::number(bytes / 1024.0, 'f', 2)));
-//        });
-//
-//    editRefreshTimer_ = new QTimer(this);
-//    editRefreshTimer_->setSingleShot(true);
-//    editRefreshTimer_->setInterval(300); // 防抖毫秒，可按需调整
-//
-//    connect(editor_, &QPlainTextEdit::textChanged,
-//        this, &MainWindow::onEditorTextChanged);
-//    connect(editRefreshTimer_, &QTimer::timeout,
-//        this, &MainWindow::reparseFromEditor);
-//
-//    updateWindowTitle();
-//}
-
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent),
     editor_(new QPlainTextEdit(this)),
@@ -113,7 +78,6 @@ MainWindow::MainWindow(QWidget* parent)
 
     updateWindowTitle();
 
-    // ★★★ 自动加载 CMakeLists 同目录下的 .exp
     autoLoadSchemaOnStartup();
 }
 
@@ -129,7 +93,7 @@ void MainWindow::reparseFromEditor()
 {
     const QString text = editor_->toPlainText();
     RecomputeStats st = recomputeFromText(text);
-    rebuildClassTree();                  // 你的 rebuild 已含 (0/0) 裁剪的话会生效
+    rebuildClassTree();                  //rebuild 已含 (0/0) 裁剪的话会生效
 
 #ifdef QT_DEBUG
     qDebug() << "[reparseFromEditor] instances=" << st.instances
@@ -156,7 +120,6 @@ void MainWindow::highlightRangeColored(int start, int end, const QColor& bg)
     fmt.setBackground(bg);        // 颜色外部传入
     sel.format = fmt;
 
-    // 如果你想叠加之前的高亮，可把 currentSelections_ 合并；这里直接覆盖
     currentSelections_.clear();
     currentSelections_ << sel;
     editor_->setExtraSelections(currentSelections_);
@@ -172,7 +135,7 @@ void MainWindow::onPropTableCellClicked(int row, int /*col*/)
     const int end = it->data(Qt::UserRole + 1).toInt();
 
     if (start >= 0 && end > start) {
-        // ★ 按需蓝色高亮（带一点透明度）
+        //按需蓝色高亮（带一点透明度）
         highlightRangeColored(start, end, QColor(51, 153, 255, 120));
     }
     QTextCursor cur(editor_->document());
@@ -223,138 +186,6 @@ MainWindow::RecomputeStats MainWindow::recomputeFromText(const QString& text)
     return stats;
 }
 
-
-// ================== UI 构建 ==================
-//void MainWindow::buildMenusAndToolbar()
-//{
-//    // 文件
-//    auto mFile = menuBar()->addMenu(QStringLiteral("文件"));
-//    auto actNew = mFile->addAction(QStringLiteral("新建 (&N)"));
-//    actNew->setShortcut(QKeySequence::New);
-//    connect(actNew, &QAction::triggered, this, &MainWindow::newFile);
-//
-//    // 创建并设置“最近打开的文件”菜单，并设置objectName
-//    mRecentFilesMenu_ = new QMenu(QStringLiteral("最近打开的文件"), this);
-//    mRecentFilesMenu_->setObjectName(QStringLiteral("recentFilesMenu"));  // 设置 objectName
-//    mFile->addMenu(mRecentFilesMenu_);
-//    mRecentFilesMenu_->setEnabled(false);  // 初始化时禁用菜单
-//    // 更新最近文件菜单
-//    updateRecentFilesMenu();
-//
-//    auto actOpen = mFile->addAction(QStringLiteral("打开GFC (&O) ..."));
-//    actOpen->setShortcut(QKeySequence::Open);
-//    connect(actOpen, &QAction::triggered, this, &MainWindow::openGfc);
-//
-//    auto actSave = mFile->addAction(QStringLiteral("保存 (&S)"));
-//    actSave->setShortcut(QKeySequence::Save);
-//    connect(actSave, &QAction::triggered, this, &MainWindow::saveGfc);
-//
-//    auto actSaveAs = mFile->addAction(QStringLiteral("另存为 (&A) ..."));
-//    connect(actSaveAs, &QAction::triggered, this, &MainWindow::saveGfcAs);
-//
-//    mFile->addSeparator();
-//    auto actOpenExp = mFile->addAction(QStringLiteral("打开Schema(.exp) ..."));
-//    connect(actOpenExp, &QAction::triggered, this, &MainWindow::openSchemaExp);
-//
-//    mFile->addSeparator();
-//    auto actQuit = mFile->addAction(QStringLiteral("退出"));
-//    actQuit->setShortcut(QKeySequence::Quit);
-//    connect(actQuit, &QAction::triggered, this, &QWidget::close);
-//
-//    // 导航
-//    auto mNav = menuBar()->addMenu(QStringLiteral("导航"));
-//    actBack_ = mNav->addAction(QStringLiteral("后退"));
-//    actBack_->setShortcut(QKeySequence::Back);
-//    connect(actBack_, &QAction::triggered, this, &MainWindow::goBack);
-//    actForward_ = mNav->addAction(QStringLiteral("前进"));
-//    actForward_->setShortcut(QKeySequence::Forward);
-//    connect(actForward_, &QAction::triggered, this, &MainWindow::goForward);
-//    mNav->addSeparator();
-//    actLocate_ = mNav->addAction(QStringLiteral("定位"));
-//    connect(actLocate_, &QAction::triggered, this, &MainWindow::locateAtCursor);
-//
-//    // 编辑
-//    auto mEdit = menuBar()->addMenu(QStringLiteral("编辑"));
-//    auto actUndo = mEdit->addAction(QStringLiteral("撤销"));
-//    actUndo->setShortcut(QKeySequence::Undo);
-//    connect(actUndo, &QAction::triggered, editor_, &QPlainTextEdit::undo);
-//
-//    auto actRedo = mEdit->addAction(QStringLiteral("重复"));
-//    actRedo->setShortcut(QKeySequence::Redo);
-//    connect(actRedo, &QAction::triggered, editor_, &QPlainTextEdit::redo);
-//
-//    mEdit->addSeparator();
-//    auto actCut = mEdit->addAction(QStringLiteral("剪切"));
-//    actCut->setShortcut(QKeySequence::Cut);
-//    connect(actCut, &QAction::triggered, editor_, &QPlainTextEdit::cut);
-//
-//    auto actCopy = mEdit->addAction(QStringLiteral("复制"));
-//    actCopy->setShortcut(QKeySequence::Copy);
-//    connect(actCopy, &QAction::triggered, editor_, &QPlainTextEdit::copy);
-//
-//    auto actPaste = mEdit->addAction(QStringLiteral("粘贴"));
-//    actPaste->setShortcut(QKeySequence::Paste);
-//    connect(actPaste, &QAction::triggered, editor_, &QPlainTextEdit::paste);
-//
-//    mEdit->addSeparator();
-//    auto actFind = mEdit->addAction(QStringLiteral("查找..."));
-//    actFind->setShortcut(QKeySequence::Find);
-//    connect(actFind, &QAction::triggered, this, &MainWindow::doFind);
-//
-//    auto actFindNext = mEdit->addAction(QStringLiteral("查找下一个"));
-//    actFindNext->setShortcut(QKeySequence(Qt::Key_F3));
-//    connect(actFindNext, &QAction::triggered, this, &MainWindow::doFindNext);
-//
-//    auto actReplace = mEdit->addAction(QStringLiteral("替换..."));
-//    actReplace->setShortcut(QKeySequence::Replace);
-//    connect(actReplace, &QAction::triggered, this, &MainWindow::doReplace);
-//
-//    // 工具
-//    auto mView = menuBar()->addMenu(QStringLiteral("工具"));
-//    auto actToolbar = mView->addAction(QStringLiteral("工具栏"));
-//    actToolbar->setCheckable(true);
-//    actToolbar->setChecked(true);
-//    connect(actToolbar, &QAction::triggered, this, &MainWindow::toggleToolbar);
-//
-//    auto actClassDock = mView->addAction(QStringLiteral("类视图(视图区)"));
-//    actClassDock->setCheckable(true);
-//    actClassDock->setChecked(true);
-//    connect(actClassDock, &QAction::triggered, this, &MainWindow::toggleClassDock);
-//
-//    auto actPropDock = mView->addAction(QStringLiteral("属性区"));
-//    actPropDock->setCheckable(true);
-//    actPropDock->setChecked(true);
-//    connect(actPropDock, &QAction::triggered, this, &MainWindow::togglePropDock);
-//
-//    auto actStatusbar = mView->addAction(QStringLiteral("状态栏"));
-//    actStatusbar->setCheckable(true);
-//    actStatusbar->setChecked(true);
-//    connect(actStatusbar, &QAction::triggered, this, &MainWindow::toggleStatusbar);
-//
-//    //帮助
-//    auto mHelp = menuBar()->addMenu(QStringLiteral("帮助"));
-//    auto actHelp = mHelp->addAction(QStringLiteral("帮助文档"));
-//    connect(actHelp, &QAction::triggered, this, &MainWindow::showHelpDocument);
-//    auto actAbout = mHelp->addAction(QStringLiteral("关于"));
-//    connect(actAbout, &QAction::triggered, this, &MainWindow::showAboutDialog);
-//
-//    // 工具栏（常用）
-//    auto tb = addToolBar(QStringLiteral("工具栏"));
-//    tb->addAction(actNew);
-//    tb->addAction(actOpen);
-//    tb->addAction(actSave);
-//    tb->addSeparator();
-//    tb->addAction(actUndo);
-//    tb->addAction(actRedo);
-//    tb->addSeparator();
-//    tb->addAction(actFind);
-//    tb->addAction(actReplace);
-//    tb->addSeparator();
-//    tb->addAction(actBack_);
-//    tb->addAction(actForward_);
-//    tb->addAction(actLocate_);
-//}
-
 void MainWindow::buildMenusAndToolbar()
 {
     // 文件
@@ -380,11 +211,6 @@ void MainWindow::buildMenusAndToolbar()
 
     auto actSaveAs = mFile->addAction(QStringLiteral("另存为 (&A) ..."));
     connect(actSaveAs, &QAction::triggered, this, &MainWindow::saveGfcAs);
-
-    // —— 原本这里有 “打开Schema(.exp)” —— 已删除 —— //
-    // mFile->addSeparator();
-    // auto actOpenExp = mFile->addAction(QStringLiteral("打开Schema(.exp) ..."));
-    // connect(actOpenExp, &QAction::triggered, this, &MainWindow::openSchemaExp);
 
     mFile->addSeparator();
     auto actQuit = mFile->addAction(QStringLiteral("退出"));
@@ -504,54 +330,6 @@ void MainWindow::showAboutDialog() {
         + QStringLiteral("说明: 这是一个用于编辑 GFC 文件的应用。"));
 }
 
-/*void MainWindow::buildDocks()
-{
-    // 视图区（类继承树）
-    classTree_ = new QTreeView(this);
-    classTree_->setHeaderHidden(true);
-    classModel_ = new QStandardItemModel(this);
-    classModel_->setHorizontalHeaderLabels({ QStringLiteral("类/统计") });
-    classTree_->setModel(classModel_);
-    connect(classTree_, &QTreeView::clicked, this, &MainWindow::onClassTreeClicked);
-
-    auto dockClass = new QDockWidget(QStringLiteral("视图区 - 类继承"), this);
-    dockClass->setObjectName("dockClassView");
-    dockClass->setWidget(classTree_);
-    addDockWidget(Qt::LeftDockWidgetArea, dockClass);
-
-    // 属性区（显示 Schema 中该类属性定义）
-    propTable_ = new QTableWidget(this);
-    propTable_->setColumnCount(2);
-    propTable_->setHorizontalHeaderLabels({ QStringLiteral("属性名/定义"), QStringLiteral("类型/备注") });
-    propTable_->horizontalHeader()->setStretchLastSection(true);
-
-    auto dockProp = new QDockWidget(QStringLiteral("属性区"), this);
-    dockProp->setObjectName("dockProp");
-    dockProp->setWidget(propTable_);
-    addDockWidget(Qt::RightDockWidgetArea, dockProp);
-
-    // ==== （新增）查找结果区 ====
-    findResults_ = new QTableWidget(this);
-    findResults_->setColumnCount(3);
-    findResults_->setHorizontalHeaderLabels({ QStringLiteral("行"), QStringLiteral("列"), QStringLiteral("内容") });
-    findResults_->horizontalHeader()->setStretchLastSection(true);
-    findResults_->setSelectionBehavior(QAbstractItemView::SelectRows);
-    findResults_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    connect(findResults_, &QTableWidget::cellDoubleClicked,
-        this, &MainWindow::onFindResultActivated);
-
-    auto dockFind = new QDockWidget(QStringLiteral("查找结果"), this);
-    dockFind->setObjectName("dockFindResults");
-    dockFind->setWidget(findResults_);
-    addDockWidget(Qt::BottomDockWidgetArea, dockFind);
-
-    // 允许浮动/停靠
-    dockClass->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetClosable);
-    dockProp->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetClosable);
-    dockFind->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetClosable);
-}*/
-
-
 void MainWindow::buildDocks()
 {
     // 视图区（类继承树）
@@ -632,17 +410,6 @@ void MainWindow::buildStatusBar()
     lblSize_->setText(QStringLiteral("大小: %1 KB").arg(QString::number(bytes / 1024.0, 'f', 2)));
 }
 
-// ================== 文件相关 ==================
-//void MainWindow::newFile()
-//{
-//    editor_->clear();
-//    currentFilePath_.clear();
-//    classCounts_.clear();
-//    rebuildClassTree();
-//    updateWindowTitle();
-//    if (findResults_) findResults_->setRowCount(0); // 清空查找结果
-//}
-
 void MainWindow::newFile()
 {
     // 清空状态
@@ -654,10 +421,10 @@ void MainWindow::newFile()
     static const char* kGfcTemplate =
         "HEADER;\n"
         "FILE_DESCRIPTION(('GFC3X4'),'65001');\n"
-        "FILE_NAME('');\n"          // 注意反斜杠要转义成 \\\\
+        "FILE_NAME('');\n"          
         "FILE_SCHEMA(('GFC3X4'));\n"
         "ENDSEC;\n"
-        "DATA;\n";                            // 空白数据段从这里开始
+        "DATA;\n";                
 
     editor_->setPlainText(QString::fromUtf8(kGfcTemplate));
 
@@ -731,73 +498,6 @@ void MainWindow::openSchemaExp()
     statusBar()->showMessage(QStringLiteral("已加载 Schema：%1").arg(path), 3000);
 }
 
-//bool MainWindow::loadGfcFromFile(const QString& path)
-//{
-//    QFile f(path);
-//    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
-//        QMessageBox::warning(this, QStringLiteral("打开失败"),
-//            QStringLiteral("无法打开文件：%1").arg(path));
-//        return false;
-//    }
-//
-//    QTextStream in(&f);
-//    setUtf8(in);
-//    const QString text = in.readAll();
-//    editor_->setPlainText(text);
-//
-//    instanceRefs_.clear();
-//    QVector<GfcInstanceRef> refs;
-//    GfcParser::countClasses(text, &refs);
-//
-//    directCountCamel_.clear();
-//    inclusiveCountCamel_.clear();
-//    instancesByCamel_.clear();
-//
-//    if (schema_.classes().isEmpty()) {
-//        statusBar()->showMessage(QStringLiteral("提示：未加载 Schema(.exp)，只能显示文本，视图区计数为0。"), 4000);
-//        rebuildClassTree();
-//        return true;
-//    }
-//    if (lowerToCamel_.isEmpty()) {
-//        prepareSchemaIndex();
-//    }
-//
-//    int unknown = 0;
-//    for (const auto& r : refs) {
-//        const QString camel = lowerToCamel_.value(r.cls.toLower());
-//        if (camel.isEmpty()) { ++unknown; continue; }
-//        directCountCamel_[camel] += 1;
-//        instancesByCamel_[camel].push_back(r);
-//    }
-//
-//    inclusiveCountCamel_ = directCountCamel_;
-//    for (auto it = directCountCamel_.cbegin(); it != directCountCamel_.cend(); ++it) {
-//        QString p = schema_.classes().value(it.key()).parent;
-//        while (!p.isEmpty()) {
-//            inclusiveCountCamel_[p] += it.value();
-//            p = schema_.classes().value(p).parent;
-//        }
-//    }
-//
-//    currentFilePath_ = path;
-//    updateWindowTitle();
-//    rebuildClassTree();
-//
-//#ifdef QT_DEBUG
-//    qDebug() << "==== loadGfcFromFile ===="
-//        << "parsed instances:" << refs.size()
-//        << "unknown classes:" << unknown;
-//#endif
-//
-//    statusBar()->showMessage(
-//        QStringLiteral("已加载 GFC：解析到 %1 个实例，映射到 %2 个类，忽略未知类 %3。")
-//        .arg(refs.size()).arg(directCountCamel_.size()).arg(unknown),
-//        4000);
-//
-//    return true;
-//}
-
-
 bool MainWindow::loadGfcFromFile(const QString& path)
 {
     QFile f(path);
@@ -812,10 +512,8 @@ bool MainWindow::loadGfcFromFile(const QString& path)
     editor_->setPlainText(text);
     suppressReparse_ = false;
 
-    // ★ 新增：启用 .gfc 语法着色
     enableGfcSyntaxColors();
 
-    // （你原有的：统计/刷新等）
     classCounts_ = GfcParser::countClasses(text, nullptr);
     RecomputeStats st = recomputeFromText(text);
     currentFilePath_ = path;
@@ -1030,7 +728,7 @@ void MainWindow::onCursorPosChanged()
     if (m.hasMatch()) {
         const int startInBlock = m.capturedStart(0);
         const int absStart = c.block().position() + startInBlock;
-        showInstanceByPos(absStart, /*moveCaret=*/false);  // ✅ 文本点击：不跳光标，便于编辑
+        showInstanceByPos(absStart, /*moveCaret=*/false);  // 文本点击：不跳光标，便于编辑
     }
 }
 
@@ -1093,7 +791,7 @@ void MainWindow::showParsedInstanceProperties(const ParsedInstance& pi, const QS
         auto* c1 = new QTableWidgetItem(v);
         c1->setFlags(c1->flags() & ~Qt::ItemIsEditable);
 
-        // ★ 计算并保存该“第 i 个参数”的绝对区间（start,end）
+        //计算并保存该“第 i 个参数”的绝对区间（start,end）
         QPair<int, int> range = paramRangeInInstance(pi, i, whole);
         // 用 UserRole / UserRole+1 埋入
         c0->setData(Qt::UserRole, range.first);
@@ -1115,7 +813,7 @@ void MainWindow::showInstanceByPos(int pos, bool moveCaret)
         return; // 不是实例或解析失败：不动属性表/高亮
     }
 
-    // ★ 记录当前实例，供属性区点击时定位参数
+    //记录当前实例，供属性区点击时定位参数
     currentInstance_ = pi;
 
     const QString camel = camelFromUpper(pi.classUpper);
@@ -1125,7 +823,6 @@ void MainWindow::showInstanceByPos(int pos, bool moveCaret)
     else {
         showParsedInstanceProperties(pi, QString());
     }
-
 
     // 仅做“额外高亮”，不影响编辑光标
     highlightRange(pi.start, pi.end);
@@ -1148,7 +845,7 @@ void MainWindow::onClassTreeClicked(const QModelIndex& idx)
 
     if (nodeType == NodeInstance) {
         const int pos = idx.data(RoleDocPos).toInt();
-        showInstanceByPos(pos, /*moveCaret=*/true);   // ✅ 类视图点击：允许跳转
+        showInstanceByPos(pos, /*moveCaret=*/true);   //类视图点击：允许跳转
         return;
     }
 
@@ -1161,7 +858,7 @@ void MainWindow::onClassTreeClicked(const QModelIndex& idx)
 
 
 
-// ================== 查找/替换/高亮辅助（保持你原有逻辑不变；仅在“查找”后填充列表） ==================
+// ================== 查找/替换/高亮辅助 ==================
 
 
 void MainWindow::doFind() {
@@ -1196,7 +893,7 @@ void MainWindow::doFind() {
     layout->addWidget(replaceButton);
     layout->addWidget(replaceAllButton);
 
-    // —— 查找：定位 +（新增）把所有匹配填入底部列表
+    // 查找：定位 +（新增）把所有匹配填入底部列表
     connect(findButton, &QPushButton::clicked, this,
         [this, findLineEdit, caseCheckBox, wordCheckBox] {
             const QString searchText = findLineEdit->text();
@@ -1423,7 +1120,7 @@ void MainWindow::enableGfcSyntaxColors()
             static const QTextCharFormat fmtId = [] { QTextCharFormat f; f.setForeground(QColor(200, 120, 0));  return f; }(); // #123=
             static const QTextCharFormat fmtClass = [] { QTextCharFormat f; f.setForeground(QColor(25, 118, 210)); f.setFontWeight(QFont::Bold); return f; }(); // 类名
             static const QTextCharFormat fmtCmt = [] { QTextCharFormat f; f.setForeground(QColor(120, 120, 120));  return f; }(); // 注释
-            // ★ 新增：关键字 HEADER / DATA（红色加粗）
+            // 关键字 HEADER / DATA（红色加粗）
             static const QTextCharFormat fmtKw = [] { QTextCharFormat f; f.setForeground(QColor(220, 0, 0)); f.setFontWeight(QFont::Bold); return f; }();
 
             // --- 正则（按 token 类型） ---
@@ -1436,7 +1133,7 @@ void MainWindow::enableGfcSyntaxColors()
             static const QRegularExpression reId(R"(#\s*\d+(?=\s*=))");
             // 类名： =ClassName(   ——着色捕获组1
             static const QRegularExpression reClass(R"(=\s*([A-Za-z_][A-Za-z0-9_]*)\s*\()");
-            // ★ 新增：关键字（仅匹配完整单词）
+            // 关键字（仅匹配完整单词）
             static const QRegularExpression reKw(R"(\b(?:HEADER|DATA)\b)");
             // 行注释
             static const QRegularExpression reLineCmt(R"(//.*$)", QRegularExpression::MultilineOption);
@@ -1467,7 +1164,7 @@ void MainWindow::enableGfcSyntaxColors()
                 if (s1 >= 0 && l1 > 0) setFormat(s1, l1, fmtClass);
             }
 
-            // ★ 5) 关键字 HEADER / DATA（注意放在注释着色之前，后者会覆盖前者）
+            // 5) 关键字 HEADER / DATA（注意放在注释着色之前，后者会覆盖前者）
             it = reKw.globalMatch(text);
             while (it.hasNext()) { const auto m = it.next(); setFormat(m.capturedStart(), m.capturedLength(), fmtKw); }
 
@@ -1845,7 +1542,6 @@ bool MainWindow::ctrlClickJumpToInstance(const QPoint& viewPos)
 
 bool MainWindow::extractHashIdAtCursor(const QTextCursor& cur, int* outId) const
 {
-    // 仅在当前行内做词法扩展，允许在括号中，如 (...,#5,...) 或 (#12)
     const QTextBlock blk = cur.block();
     const QString line = blk.text();
     const int posInBlock = cur.position() - blk.position();
@@ -1877,12 +1573,6 @@ bool MainWindow::extractHashIdAtCursor(const QTextCursor& cur, int* outId) const
     QString digits;
     while (i < line.size() && line[i].isDigit()) { digits += line[i]; ++i; }
     if (digits.isEmpty()) return false;
-
-    // （可选）判断是否“在括号内”
-    // 若严格要求括号内，可打开下列判断：
-    // int lparen = line.lastIndexOf('(', left);
-    // int rparen = line.indexOf(')', i);
-    // if (!(lparen >= 0 && rparen >= 0 && lparen < left && rparen > i)) return false;
 
     if (outId) *outId = digits.toInt();
     return true;
