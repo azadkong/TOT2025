@@ -40,14 +40,16 @@ bool GfcParser::parseInstanceAt(const QString& text, int startPos, ParsedInstanc
     if (!out) return false;
     *out = ParsedInstance{};
 
-    // 从当前行开始匹配：#n=CLASS(
+    // 从当前行起点开始尝试匹配：#n=CLASS(
     int lineStart = text.lastIndexOf('\n', qMax(0, startPos));
     if (lineStart < 0) lineStart = 0; else ++lineStart;
 
-    QRegularExpression re(R"(#\s*([0-9]+)\s*=\s*([A-Za-z0-9_]+)\s*\()", QRegularExpression::CaseInsensitiveOption);
+    QRegularExpression re(
+        R"(#\s*([0-9]+)\s*=\s*([A-Za-z0-9_]+)\s*\()",
+        QRegularExpression::CaseInsensitiveOption);
     auto m = re.match(text, lineStart);
     if (!m.hasMatch()) {
-        // 再从给定位置尝试一次（若传入的是 # 位置）
+        // 再从传入位置尝试一次（例如传进来就是 '#' 的位置）
         m = re.match(text, startPos);
         if (!m.hasMatch()) return false;
     }
@@ -56,30 +58,38 @@ bool GfcParser::parseInstanceAt(const QString& text, int startPos, ParsedInstanc
     const int idx = m.captured(1).toInt();
     const QString clsUpper = m.captured(2).toUpper();
 
-    // 找到第一个 '('，向后扫描到与之匹配的 ')'
-    int parenOpen = text.indexOf('(', m.capturedEnd(0) - 1);
-    if (parenOpen < 0) return false;
+    // 左括号位置
+    const int openPos = text.indexOf('(', m.capturedEnd(0) - 1);
+    if (openPos < 0) return false;
 
-    int i = parenOpen, depth = 0; bool inStr = false;
-    for (; i < text.size(); ++i) {
+    // 向后扫描，找到与之匹配的右括号 closePos（指向')'本身）
+    int closePos = -1;
+    int depth = 0;
+    bool inStr = false;
+    for (int i = openPos; i < text.size(); ++i) {
         const QChar ch = text[i];
         if (inStr) {
-            if (isQuoteEscape(text, i)) { ++i; continue; }
+            // STEP 风格转义：两个单引号表示一个 '
+            if (i + 1 < text.size() && text[i] == '\'' && text[i + 1] == '\'') { ++i; continue; }
             if (ch == '\'') inStr = false;
             continue;
         }
         if (ch == '\'') { inStr = true; continue; }
         if (ch == '(') { ++depth; continue; }
-        if (ch == ')') { --depth; if (depth == 0) { ++i; break; } continue; }
+        if (ch == ')') {
+            --depth;
+            if (depth == 0) { closePos = i; break; }
+            continue;
+        }
     }
-    if (i >= text.size()) return false;
+    if (closePos < 0) return false; // 未闭合
 
-    // 可选分号
-    int endPos = i;
+    // 实例结束位置（含右括号与可选分号）
+    int endPos = closePos + 1;
     if (endPos < text.size() && text[endPos] == ';') ++endPos;
 
-    // 顶层参数切分
-    const QString paramZone = text.mid(parenOpen + 1, i - (parenOpen + 1));
+    // 只取 openPos+1 .. closePos-1 的内容作为参数区 —— 不会把 ')' 带进去
+    const QString paramZone = text.mid(openPos + 1, closePos - (openPos + 1));
     const QStringList params = splitTopLevelCsv(paramZone);
 
     out->index = idx;
@@ -89,6 +99,7 @@ bool GfcParser::parseInstanceAt(const QString& text, int startPos, ParsedInstanc
     out->end = endPos;
     return true;
 }
+
 
 
 QHash<QString, int> GfcParser::countClasses(const QString &wholeText,
