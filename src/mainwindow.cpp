@@ -142,6 +142,47 @@ void MainWindow::reparseFromEditor()
         2000);
 }
 
+void MainWindow::highlightRangeColored(int start, int end, const QColor& bg)
+{
+    QList<QTextEdit::ExtraSelection> sels;
+    QTextCursor cur(editor_->document());
+    cur.setPosition(start);
+    cur.setPosition(end, QTextCursor::KeepAnchor);
+
+    QTextEdit::ExtraSelection sel;
+    sel.cursor = cur;
+
+    QTextCharFormat fmt;
+    fmt.setBackground(bg);        // 颜色外部传入
+    sel.format = fmt;
+
+    // 如果你想叠加之前的高亮，可把 currentSelections_ 合并；这里直接覆盖
+    currentSelections_.clear();
+    currentSelections_ << sel;
+    editor_->setExtraSelections(currentSelections_);
+}
+
+void MainWindow::onPropTableCellClicked(int row, int /*col*/)
+{
+    // 取该行任一列（这里取第0列）写入的区间
+    QTableWidgetItem* it = propTable_->item(row, 0);
+    if (!it) return;
+
+    const int start = it->data(Qt::UserRole).toInt();
+    const int end = it->data(Qt::UserRole + 1).toInt();
+
+    if (start >= 0 && end > start) {
+        // ★ 按需蓝色高亮（带一点透明度）
+        highlightRangeColored(start, end, QColor(51, 153, 255, 120));
+    }
+    QTextCursor cur(editor_->document());
+    cur.setPosition(start);
+    cur.setPosition(end, QTextCursor::KeepAnchor);
+    editor_->setTextCursor(cur);
+
+}
+
+
 MainWindow::RecomputeStats MainWindow::recomputeFromText(const QString& text)
 {
     RecomputeStats stats;
@@ -531,7 +572,9 @@ void MainWindow::buildDocks()
     propTable_->setColumnCount(2);
     propTable_->setHorizontalHeaderLabels({ QStringLiteral("属性名/定义"), QStringLiteral("类型/备注") });
     propTable_->horizontalHeader()->setStretchLastSection(true);
-
+    
+    connect(propTable_, &QTableWidget::cellClicked,this, &MainWindow::onPropTableCellClicked);
+    
     auto dockProp = new QDockWidget(QStringLiteral("属性区"), this);
     dockProp->setObjectName("dockProp");
     dockProp->setWidget(propTable_);
@@ -1035,9 +1078,11 @@ void MainWindow::showParsedInstanceProperties(const ParsedInstance& pi, const QS
     propTable_->setRowCount(0);
     propTable_->setHorizontalHeaderLabels({ QStringLiteral("属性名"), QStringLiteral("值") });
 
-    const QStringList names = schemaAttrNames(camel);     // 按 .exp 顺序
+    const QStringList names = schemaAttrNames(camel);
     const int rows = qMax(names.size(), pi.params.size());
     propTable_->setRowCount(rows);
+
+    const QString whole = editor_->toPlainText();
 
     for (int i = 0; i < rows; ++i) {
         const QString n = (i < names.size()) ? names[i] : QStringLiteral("<extra #%1>").arg(i + 1);
@@ -1048,10 +1093,19 @@ void MainWindow::showParsedInstanceProperties(const ParsedInstance& pi, const QS
         auto* c1 = new QTableWidgetItem(v);
         c1->setFlags(c1->flags() & ~Qt::ItemIsEditable);
 
+        // ★ 计算并保存该“第 i 个参数”的绝对区间（start,end）
+        QPair<int, int> range = paramRangeInInstance(pi, i, whole);
+        // 用 UserRole / UserRole+1 埋入
+        c0->setData(Qt::UserRole, range.first);
+        c0->setData(Qt::UserRole + 1, range.second);
+        c1->setData(Qt::UserRole, range.first);
+        c1->setData(Qt::UserRole + 1, range.second);
+
         propTable_->setItem(i, 0, c0);
         propTable_->setItem(i, 1, c1);
     }
 }
+
 
 void MainWindow::showInstanceByPos(int pos, bool moveCaret)
 {
@@ -1061,14 +1115,17 @@ void MainWindow::showInstanceByPos(int pos, bool moveCaret)
         return; // 不是实例或解析失败：不动属性表/高亮
     }
 
+    // ★ 记录当前实例，供属性区点击时定位参数
+    currentInstance_ = pi;
+
     const QString camel = camelFromUpper(pi.classUpper);
     if (!camel.isEmpty()) {
         showParsedInstanceProperties(pi, camel);
     }
     else {
-        // 未映射到 schema 的类：也按顺序展示参数
         showParsedInstanceProperties(pi, QString());
     }
+
 
     // 仅做“额外高亮”，不影响编辑光标
     highlightRange(pi.start, pi.end);
@@ -1933,4 +1990,69 @@ void MainWindow::autoLoadSchemaOnStartup()
     updateWindowTitle();
     statusBar()->showMessage(QStringLiteral("已自动加载 Schema：%1")
         .arg(QFileInfo(path).fileName()), 3000);
+}
+
+QPair<int, int> MainWindow::paramRangeInInstance(const ParsedInstance& pi, int paramIndex, const QString& wholeText)
+{
+    if (pi.start < 0 || pi.end <= pi.start || paramIndex < 0) return { -1, -1 };
+
+    // 1) 从实例起点向后找第一个 '('
+    int parenOpen = wholeText.indexOf('(', pi.start);
+    if (parenOpen < 0 || parenOpen >= pi.end) return { -1, -1 };
+
+    // 2) 匹配到顶层的 ')'（处理字符串转义与嵌套括号）
+    int i = parenOpen, depth = 0; bool inStr = false;
+    int parenClose = -1;
+    for (; i < pi.end; ++i) {
+        const QChar ch = wholeText[i];
+        if (inStr) {
+            // STEP 风格：'' 表示转义单引号
+            if (ch == '\'' && i + 1 < pi.end && wholeText[i + 1] == '\'') { ++i; continue; }
+            if (ch == '\'') inStr = false;
+            continue;
+        }
+        if (ch == '\'') { inStr = true; continue; }
+        if (ch == '(') { ++depth; continue; }
+        if (ch == ')') { --depth; if (depth == 0) { parenClose = i; break; } }
+    }
+    if (parenClose < 0) return { -1, -1 };
+
+    // 3) 在 [parenOpen+1, parenClose) 内按“顶层逗号”切分，抓第 paramIndex 个片段
+    int segStart = parenOpen + 1;
+    int curIndex = 0;
+    inStr = false; depth = 0;
+    for (int p = parenOpen + 1; p <= parenClose; ++p) {
+        bool atEnd = (p == parenClose);
+        const QChar ch = wholeText[p];
+
+        if (!atEnd) {
+            if (inStr) {
+                if (ch == '\'' && p + 1 <= parenClose && wholeText[p + 1] == '\'') { ++p; continue; }
+                if (ch == '\'') inStr = false;
+                continue;
+            }
+            if (ch == '\'') { inStr = true; continue; }
+            if (ch == '(') { ++depth; continue; }
+            if (ch == ')') { --depth; continue; }
+        }
+
+        const bool isTopComma = (!atEnd && depth == 0 && ch == ',');
+        const bool isLastSeg = (atEnd);
+
+        if (isTopComma || isLastSeg) {
+            // 片段 [segStart, p) 是第 curIndex 个参数
+            if (curIndex == paramIndex) {
+                int segEnd = isTopComma ? p : p; // end 为不含逗号的位置
+                // 去掉首尾空白
+                int a = segStart, b = segEnd;
+                while (a < b && wholeText[a].isSpace()) ++a;
+                while (b > a && wholeText[b - 1].isSpace()) --b;
+                return { a, b };
+            }
+            // 下一个片段起点：逗号后
+            segStart = p + 1;
+            ++curIndex;
+        }
+    }
+    return { -1, -1 };
 }

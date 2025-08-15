@@ -68,6 +68,8 @@ private slots:
     void onEditorTextChanged();  // ★ 新增：文本改变 -> 启动防抖
     void reparseFromEditor();    // ★ 新增：到点重算并刷新
 
+    void highlightRangeColored(int start, int end, const QColor& bg);
+    void onPropTableCellClicked(int row, int col);
 private:
     QList<QString> recentFiles_;  // 用于存储最近打开的文件路径
     void updateRecentFilesMenu();  // 更新最近打开文件的菜单
@@ -189,4 +191,8 @@ private:
 
     QString findSchemaExpNearCMake();
     void autoLoadSchemaOnStartup();
+
+
+    QPair<int, int> paramRangeInInstance(const ParsedInstance& pi, int paramIndex, const QString& wholeText);
+    ParsedInstance currentInstance_;
 };
