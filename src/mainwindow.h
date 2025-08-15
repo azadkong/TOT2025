@@ -12,6 +12,11 @@
 #include <QTextEdit>
 #include <QTableWidgetItem>
 #include <QColor>
+#include <QDir>
+#include <QFileInfo>
+#include <QCoreApplication>
+#include <QMessageBox>
+
 
 class QPlainTextEdit;
 class QTreeView;
@@ -181,4 +186,7 @@ private:
     QStringList schemaAttrNames(const QString& camel) const;
     void showParsedInstanceProperties(const ParsedInstance& pi, const QString& camel);
     QList<QTextEdit::ExtraSelection> currentSelections_;
+
+    QString findSchemaExpNearCMake();
+    void autoLoadSchemaOnStartup();
 };

@@ -50,6 +50,41 @@ static void setUtf8(QTextStream& ts) {
 #endif
 }
 
+//MainWindow::MainWindow(QWidget* parent)
+//    : QMainWindow(parent),
+//    editor_(new QPlainTextEdit(this)),
+//    lblPos_(new QLabel(this)),
+//    lblSize_(new QLabel(this))
+//{
+//    setCentralWidget(editor_);
+//    buildMenusAndToolbar();
+//    updateNavActions();
+//
+//    buildDocks();
+//    buildStatusBar();
+//
+//    // 信号：更新状态栏
+//    editor_->viewport()->setMouseTracking(true);         // 为了在 Ctrl+移动时改鼠标
+//    editor_->viewport()->installEventFilter(this);       // 安装事件过滤器
+//
+//    connect(editor_, &QPlainTextEdit::cursorPositionChanged, this, &MainWindow::onCursorPosChanged);
+//    connect(editor_, &QPlainTextEdit::textChanged, this, [this] {
+//        const int bytes = editor_->toPlainText().toUtf8().size();
+//        lblSize_->setText(QStringLiteral("大小: %1 KB").arg(QString::number(bytes / 1024.0, 'f', 2)));
+//        });
+//
+//    editRefreshTimer_ = new QTimer(this);
+//    editRefreshTimer_->setSingleShot(true);
+//    editRefreshTimer_->setInterval(300); // 防抖毫秒，可按需调整
+//
+//    connect(editor_, &QPlainTextEdit::textChanged,
+//        this, &MainWindow::onEditorTextChanged);
+//    connect(editRefreshTimer_, &QTimer::timeout,
+//        this, &MainWindow::reparseFromEditor);
+//
+//    updateWindowTitle();
+//}
+
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent),
     editor_(new QPlainTextEdit(this)),
@@ -64,8 +99,8 @@ MainWindow::MainWindow(QWidget* parent)
     buildStatusBar();
 
     // 信号：更新状态栏
-    editor_->viewport()->setMouseTracking(true);         // 为了在 Ctrl+移动时改鼠标
-    editor_->viewport()->installEventFilter(this);       // 安装事件过滤器
+    editor_->viewport()->setMouseTracking(true);
+    editor_->viewport()->installEventFilter(this);
 
     connect(editor_, &QPlainTextEdit::cursorPositionChanged, this, &MainWindow::onCursorPosChanged);
     connect(editor_, &QPlainTextEdit::textChanged, this, [this] {
@@ -75,15 +110,17 @@ MainWindow::MainWindow(QWidget* parent)
 
     editRefreshTimer_ = new QTimer(this);
     editRefreshTimer_->setSingleShot(true);
-    editRefreshTimer_->setInterval(300); // 防抖毫秒，可按需调整
+    editRefreshTimer_->setInterval(300);
 
-    connect(editor_, &QPlainTextEdit::textChanged,
-        this, &MainWindow::onEditorTextChanged);
-    connect(editRefreshTimer_, &QTimer::timeout,
-        this, &MainWindow::reparseFromEditor);
+    connect(editor_, &QPlainTextEdit::textChanged, this, &MainWindow::onEditorTextChanged);
+    connect(editRefreshTimer_, &QTimer::timeout, this, &MainWindow::reparseFromEditor);
 
     updateWindowTitle();
+
+    // ★★★ 自动加载 CMakeLists 同目录下的 .exp
+    autoLoadSchemaOnStartup();
 }
+
 
 void MainWindow::onEditorTextChanged()
 {
@@ -151,6 +188,136 @@ MainWindow::RecomputeStats MainWindow::recomputeFromText(const QString& text)
 
 
 // ================== UI 构建 ==================
+//void MainWindow::buildMenusAndToolbar()
+//{
+//    // 文件
+//    auto mFile = menuBar()->addMenu(QStringLiteral("文件"));
+//    auto actNew = mFile->addAction(QStringLiteral("新建 (&N)"));
+//    actNew->setShortcut(QKeySequence::New);
+//    connect(actNew, &QAction::triggered, this, &MainWindow::newFile);
+//
+//    // 创建并设置“最近打开的文件”菜单，并设置objectName
+//    mRecentFilesMenu_ = new QMenu(QStringLiteral("最近打开的文件"), this);
+//    mRecentFilesMenu_->setObjectName(QStringLiteral("recentFilesMenu"));  // 设置 objectName
+//    mFile->addMenu(mRecentFilesMenu_);
+//    mRecentFilesMenu_->setEnabled(false);  // 初始化时禁用菜单
+//    // 更新最近文件菜单
+//    updateRecentFilesMenu();
+//
+//    auto actOpen = mFile->addAction(QStringLiteral("打开GFC (&O) ..."));
+//    actOpen->setShortcut(QKeySequence::Open);
+//    connect(actOpen, &QAction::triggered, this, &MainWindow::openGfc);
+//
+//    auto actSave = mFile->addAction(QStringLiteral("保存 (&S)"));
+//    actSave->setShortcut(QKeySequence::Save);
+//    connect(actSave, &QAction::triggered, this, &MainWindow::saveGfc);
+//
+//    auto actSaveAs = mFile->addAction(QStringLiteral("另存为 (&A) ..."));
+//    connect(actSaveAs, &QAction::triggered, this, &MainWindow::saveGfcAs);
+//
+//    mFile->addSeparator();
+//    auto actOpenExp = mFile->addAction(QStringLiteral("打开Schema(.exp) ..."));
+//    connect(actOpenExp, &QAction::triggered, this, &MainWindow::openSchemaExp);
+//
+//    mFile->addSeparator();
+//    auto actQuit = mFile->addAction(QStringLiteral("退出"));
+//    actQuit->setShortcut(QKeySequence::Quit);
+//    connect(actQuit, &QAction::triggered, this, &QWidget::close);
+//
+//    // 导航
+//    auto mNav = menuBar()->addMenu(QStringLiteral("导航"));
+//    actBack_ = mNav->addAction(QStringLiteral("后退"));
+//    actBack_->setShortcut(QKeySequence::Back);
+//    connect(actBack_, &QAction::triggered, this, &MainWindow::goBack);
+//    actForward_ = mNav->addAction(QStringLiteral("前进"));
+//    actForward_->setShortcut(QKeySequence::Forward);
+//    connect(actForward_, &QAction::triggered, this, &MainWindow::goForward);
+//    mNav->addSeparator();
+//    actLocate_ = mNav->addAction(QStringLiteral("定位"));
+//    connect(actLocate_, &QAction::triggered, this, &MainWindow::locateAtCursor);
+//
+//    // 编辑
+//    auto mEdit = menuBar()->addMenu(QStringLiteral("编辑"));
+//    auto actUndo = mEdit->addAction(QStringLiteral("撤销"));
+//    actUndo->setShortcut(QKeySequence::Undo);
+//    connect(actUndo, &QAction::triggered, editor_, &QPlainTextEdit::undo);
+//
+//    auto actRedo = mEdit->addAction(QStringLiteral("重复"));
+//    actRedo->setShortcut(QKeySequence::Redo);
+//    connect(actRedo, &QAction::triggered, editor_, &QPlainTextEdit::redo);
+//
+//    mEdit->addSeparator();
+//    auto actCut = mEdit->addAction(QStringLiteral("剪切"));
+//    actCut->setShortcut(QKeySequence::Cut);
+//    connect(actCut, &QAction::triggered, editor_, &QPlainTextEdit::cut);
+//
+//    auto actCopy = mEdit->addAction(QStringLiteral("复制"));
+//    actCopy->setShortcut(QKeySequence::Copy);
+//    connect(actCopy, &QAction::triggered, editor_, &QPlainTextEdit::copy);
+//
+//    auto actPaste = mEdit->addAction(QStringLiteral("粘贴"));
+//    actPaste->setShortcut(QKeySequence::Paste);
+//    connect(actPaste, &QAction::triggered, editor_, &QPlainTextEdit::paste);
+//
+//    mEdit->addSeparator();
+//    auto actFind = mEdit->addAction(QStringLiteral("查找..."));
+//    actFind->setShortcut(QKeySequence::Find);
+//    connect(actFind, &QAction::triggered, this, &MainWindow::doFind);
+//
+//    auto actFindNext = mEdit->addAction(QStringLiteral("查找下一个"));
+//    actFindNext->setShortcut(QKeySequence(Qt::Key_F3));
+//    connect(actFindNext, &QAction::triggered, this, &MainWindow::doFindNext);
+//
+//    auto actReplace = mEdit->addAction(QStringLiteral("替换..."));
+//    actReplace->setShortcut(QKeySequence::Replace);
+//    connect(actReplace, &QAction::triggered, this, &MainWindow::doReplace);
+//
+//    // 工具
+//    auto mView = menuBar()->addMenu(QStringLiteral("工具"));
+//    auto actToolbar = mView->addAction(QStringLiteral("工具栏"));
+//    actToolbar->setCheckable(true);
+//    actToolbar->setChecked(true);
+//    connect(actToolbar, &QAction::triggered, this, &MainWindow::toggleToolbar);
+//
+//    auto actClassDock = mView->addAction(QStringLiteral("类视图(视图区)"));
+//    actClassDock->setCheckable(true);
+//    actClassDock->setChecked(true);
+//    connect(actClassDock, &QAction::triggered, this, &MainWindow::toggleClassDock);
+//
+//    auto actPropDock = mView->addAction(QStringLiteral("属性区"));
+//    actPropDock->setCheckable(true);
+//    actPropDock->setChecked(true);
+//    connect(actPropDock, &QAction::triggered, this, &MainWindow::togglePropDock);
+//
+//    auto actStatusbar = mView->addAction(QStringLiteral("状态栏"));
+//    actStatusbar->setCheckable(true);
+//    actStatusbar->setChecked(true);
+//    connect(actStatusbar, &QAction::triggered, this, &MainWindow::toggleStatusbar);
+//
+//    //帮助
+//    auto mHelp = menuBar()->addMenu(QStringLiteral("帮助"));
+//    auto actHelp = mHelp->addAction(QStringLiteral("帮助文档"));
+//    connect(actHelp, &QAction::triggered, this, &MainWindow::showHelpDocument);
+//    auto actAbout = mHelp->addAction(QStringLiteral("关于"));
+//    connect(actAbout, &QAction::triggered, this, &MainWindow::showAboutDialog);
+//
+//    // 工具栏（常用）
+//    auto tb = addToolBar(QStringLiteral("工具栏"));
+//    tb->addAction(actNew);
+//    tb->addAction(actOpen);
+//    tb->addAction(actSave);
+//    tb->addSeparator();
+//    tb->addAction(actUndo);
+//    tb->addAction(actRedo);
+//    tb->addSeparator();
+//    tb->addAction(actFind);
+//    tb->addAction(actReplace);
+//    tb->addSeparator();
+//    tb->addAction(actBack_);
+//    tb->addAction(actForward_);
+//    tb->addAction(actLocate_);
+//}
+
 void MainWindow::buildMenusAndToolbar()
 {
     // 文件
@@ -159,12 +326,11 @@ void MainWindow::buildMenusAndToolbar()
     actNew->setShortcut(QKeySequence::New);
     connect(actNew, &QAction::triggered, this, &MainWindow::newFile);
 
-    // 创建并设置“最近打开的文件”菜单，并设置objectName
+    // 最近文件
     mRecentFilesMenu_ = new QMenu(QStringLiteral("最近打开的文件"), this);
-    mRecentFilesMenu_->setObjectName(QStringLiteral("recentFilesMenu"));  // 设置 objectName
+    mRecentFilesMenu_->setObjectName(QStringLiteral("recentFilesMenu"));
     mFile->addMenu(mRecentFilesMenu_);
-    mRecentFilesMenu_->setEnabled(false);  // 初始化时禁用菜单
-    // 更新最近文件菜单
+    mRecentFilesMenu_->setEnabled(false);
     updateRecentFilesMenu();
 
     auto actOpen = mFile->addAction(QStringLiteral("打开GFC (&O) ..."));
@@ -178,9 +344,10 @@ void MainWindow::buildMenusAndToolbar()
     auto actSaveAs = mFile->addAction(QStringLiteral("另存为 (&A) ..."));
     connect(actSaveAs, &QAction::triggered, this, &MainWindow::saveGfcAs);
 
-    mFile->addSeparator();
-    auto actOpenExp = mFile->addAction(QStringLiteral("打开Schema(.exp) ..."));
-    connect(actOpenExp, &QAction::triggered, this, &MainWindow::openSchemaExp);
+    // —— 原本这里有 “打开Schema(.exp)” —— 已删除 —— //
+    // mFile->addSeparator();
+    // auto actOpenExp = mFile->addAction(QStringLiteral("打开Schema(.exp) ..."));
+    // connect(actOpenExp, &QAction::triggered, this, &MainWindow::openSchemaExp);
 
     mFile->addSeparator();
     auto actQuit = mFile->addAction(QStringLiteral("退出"));
@@ -257,7 +424,7 @@ void MainWindow::buildMenusAndToolbar()
     actStatusbar->setChecked(true);
     connect(actStatusbar, &QAction::triggered, this, &MainWindow::toggleStatusbar);
 
-    //帮助
+    // 帮助
     auto mHelp = menuBar()->addMenu(QStringLiteral("帮助"));
     auto actHelp = mHelp->addAction(QStringLiteral("帮助文档"));
     connect(actHelp, &QAction::triggered, this, &MainWindow::showHelpDocument);
@@ -280,6 +447,7 @@ void MainWindow::buildMenusAndToolbar()
     tb->addAction(actForward_);
     tb->addAction(actLocate_);
 }
+
 
 void MainWindow::showHelpDocument() {
     QString helpContent = "欢迎使用本程序！\n\n"
@@ -426,14 +594,43 @@ void MainWindow::buildStatusBar()
 }
 
 // ================== 文件相关 ==================
+//void MainWindow::newFile()
+//{
+//    editor_->clear();
+//    currentFilePath_.clear();
+//    classCounts_.clear();
+//    rebuildClassTree();
+//    updateWindowTitle();
+//    if (findResults_) findResults_->setRowCount(0); // 清空查找结果
+//}
+
 void MainWindow::newFile()
 {
+    // 清空状态
     editor_->clear();
     currentFilePath_.clear();
     classCounts_.clear();
-    rebuildClassTree();
+
+    // 写入默认头段 + 空白数据段
+    static const char* kGfcTemplate =
+        "HEADER;\n"
+        "FILE_DESCRIPTION(('GFC3X4'),'65001');\n"
+        "FILE_NAME('');\n"          // 注意反斜杠要转义成 \\\\
+        "FILE_SCHEMA(('GFC3X4'));\n"
+        "ENDSEC;\n"
+        "DATA;\n";                            // 空白数据段从这里开始
+
+    editor_->setPlainText(QString::fromUtf8(kGfcTemplate));
+
+    // 光标移动到 DATA; 后（空白数据段内）
+    QTextCursor c = editor_->textCursor();
+    c.movePosition(QTextCursor::End);
+    editor_->setTextCursor(c);
+
+    // 视图/标题等收尾
+    rebuildClassTree();      // 新文件无实例，刷新左侧树
+    enableGfcSyntaxColors();
     updateWindowTitle();
-    if (findResults_) findResults_->setRowCount(0); // 清空查找结果
 }
 
 void MainWindow::openGfc() {
@@ -1644,4 +1841,70 @@ void MainWindow::highlightIdTokenAt(int pos, int id)
     fmt.setFontWeight(QFont::Bold);
     sel.format = fmt;
     editor_->setExtraSelections({ sel });
+}
+
+// 从可执行文件目录开始向上查找，优先返回“包含 CMakeLists.txt 的目录”里的 *.exp
+// 若一路找不到 CMakeLists.txt，则返回向上遍历过程中遇到的第一份 *.exp；再不行就返回空
+QString MainWindow::findSchemaExpNearCMake()
+{
+    QDir dir(QCoreApplication::applicationDirPath());
+    QString firstFoundExp;               // 记录沿途遇到的第一份 .exp
+    int guard = 0;
+
+    while (true) {
+        // 先找 .exp（优先 GFC*.exp，其次任意 *.exp）
+        QFileInfoList picks = dir.entryInfoList(QStringList() << "GFC*.exp", QDir::Files, QDir::Time);
+        if (picks.isEmpty()) {
+            picks = dir.entryInfoList(QStringList() << "*.exp", QDir::Files, QDir::Time);
+        }
+        if (!picks.isEmpty() && firstFoundExp.isEmpty()) {
+            firstFoundExp = picks.first().absoluteFilePath();
+        }
+
+        // 如果这个目录有 CMakeLists.txt：优先返回这里的 .exp（若没有就退回用 firstFoundExp）
+        if (dir.exists("CMakeLists.txt")) {
+            if (!picks.isEmpty()) return picks.first().absoluteFilePath();
+            return firstFoundExp;
+        }
+
+        // 继续向上走；最多走 12 层防止意外
+        if (!dir.cdUp() || ++guard > 12) break;
+    }
+
+    // 没找到 CMakeLists.txt，就用沿途遇到的第一份 .exp；再没有就看看 exe 目录
+    if (!firstFoundExp.isEmpty()) return firstFoundExp;
+
+    dir.setPath(QCoreApplication::applicationDirPath());
+    QFileInfoList fallback = dir.entryInfoList(QStringList() << "*.exp", QDir::Files, QDir::Time);
+    if (!fallback.isEmpty()) return fallback.first().absoluteFilePath();
+
+    return QString();
+}
+
+// 程序启动时自动加载 .exp
+void MainWindow::autoLoadSchemaOnStartup()
+{
+    const QString path = findSchemaExpNearCMake();
+    if (path.isEmpty()) {
+        statusBar()->showMessage(QStringLiteral("未找到 Schema(.exp)。请将 .exp 放到含 CMakeLists.txt 的目录。"), 4000);
+        rebuildClassTree(); // 仍然构建一棵“未加载”提示树
+        return;
+    }
+
+    QString err;
+    if (!schema_.parseFile(path, &err)) {
+        QMessageBox::warning(this, QStringLiteral("解析 Schema 失败"),
+            QStringLiteral("文件：%1\n错误：%2").arg(path, err));
+        rebuildClassTree();
+        return;
+    }
+
+    currentSchemaPath_ = path;
+    children_ = schema_.buildChildrenMap();
+    prepareSchemaIndex();    // 你已有的大小写映射（lower -> CamelCase）
+    rebuildClassTree();
+
+    updateWindowTitle();
+    statusBar()->showMessage(QStringLiteral("已自动加载 Schema：%1")
+        .arg(QFileInfo(path).fileName()), 3000);
 }
